@@ -5,6 +5,7 @@ Mirror — driver script.
     python mirror.py --explain <id>  # "why not?" — full reasoning for one resource
     python mirror.py --rewind <id>   # Black Box: counterfactual replay for one resource
     python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
+    python mirror.py --diff <id>     # real before/after diff for this resource + its real dependents
 
 This is the only file that does I/O (AWS calls via graph_builder, stdout).
 graph_builder.build_graph() reads your real AWS account. decide() is pure —
@@ -44,6 +45,7 @@ from decide import counterfactual, decide, load_policies
 from graph_builder import build_graph, dependents_of
 from reversibility import reversibility_of
 from rollback import rollback_plan_for
+from future_diff import future_diff
 
 
 def risk_score_from_activity(days_since_activity):
@@ -135,6 +137,28 @@ def rollback_plan(graph, resource_id):
             print(f"  - {step}")
     else:
         print(f"  NO ROLLBACK PATH: {plan['reason']}")
+
+
+def print_future_diff(graph, resource_id, action="delete"):
+    if resource_id not in graph["nodes"]:
+        print(f"unknown resource: {resource_id}", file=sys.stderr)
+        sys.exit(1)
+
+    diff = future_diff(graph, resource_id, action)
+
+    print(f"FUTURE DIFF: {resource_id} ({action})\n")
+    print("  THIS RESOURCE:")
+    print(f"    before: {diff['self']['before']}")
+    print(f"    after:  {diff['self']['after']['note']}")
+
+    if diff["downstream"]:
+        print(f"\n  DOWNSTREAM ({len(diff['downstream'])} real dependent(s) affected):")
+        for effect in diff["downstream"]:
+            print(f"\n    {effect['dependent']}  (via {effect['via']})")
+            print(f"      before: {effect['before']}")
+            print(f"      after:  {effect['after']}")
+    else:
+        print("\n  DOWNSTREAM: no real dependents — nothing else would be affected")
 
 
 def rewind(graph, policies, resource_id, action="delete"):
@@ -253,6 +277,8 @@ def main():
     parser.add_argument("--rewind", metavar="RESOURCE_ID")
     parser.add_argument("--rollback", metavar="RESOURCE_ID",
                          help="show real recovery facts for one resource (versioning/PITR/versions/rule definition)")
+    parser.add_argument("--diff", metavar="RESOURCE_ID",
+                         help="show the real before/after diff for one resource and its real dependents")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
     parser.add_argument("--bedrock-report", action="store_true",
                          help="also generate a plain-English summary via Bedrock (Claude)")
@@ -274,6 +300,8 @@ def main():
         rewind(graph, policies, args.rewind, args.action)
     elif args.rollback:
         rollback_plan(graph, args.rollback)
+    elif args.diff:
+        print_future_diff(graph, args.diff, args.action)
     else:
         results = evaluate_all(graph, policies, args.action)
         print_report(results)

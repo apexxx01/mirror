@@ -58,6 +58,9 @@ python mirror.py --rewind s3:mirror-demo-archive-2023-<your-account-suffix>
 # 4b. Rollback plan — real recovery facts if it gets deleted anyway
 python mirror.py --rollback s3:mirror-demo-archive-2023-<your-account-suffix>
 
+# 4c. Future diff — real before/after diff for this resource + its real dependents
+python mirror.py --diff s3:mirror-demo-archive-2023-<your-account-suffix>
+
 # 5. Clean up everything this created
 python setup_sandbox.py --teardown
 ```
@@ -77,6 +80,21 @@ python mirror.py --graph-file graph.json
 (`decide.py` never calls AWS itself, so `--graph-file` mode is instant and
 fully reproducible — useful for rehearsing the demo without hitting API
 rate limits or waiting on CloudWatch.)
+
+## Future diff
+
+`python mirror.py --diff <id>` shows the real before/after for this
+resource and, more importantly, mechanically derives the real effect on
+every actual dependent — straight from the graph edge `graph_builder.py`
+already found. If a Lambda's env var currently resolves to this bucket,
+the diff states plainly that the env var would still be set to the same
+value but would now resolve to nothing, and names the real AWS error that
+follows (`NoSuchBucket`, `ResourceNotFoundException`). If an EventBridge
+rule targets this function, the diff states the rule would still fire on
+schedule against a target that no longer exists. Nothing here is
+simulated — no invented latency, error rate, or traffic number, only real
+fields and the mechanical consequence of a real edge. See `future_diff.py`
+for the full reasoning.
 
 ## Rollback plan
 
