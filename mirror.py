@@ -6,7 +6,8 @@ Mirror — driver script.
     python mirror.py --rewind <id>   # Black Box: counterfactual replay for one resource
     python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
     python mirror.py --diff <id>     # real before/after diff for this resource + its real dependents
-    python mirror.py --full-story <id> # explain + rewind + rollback + diff, chained into one narrative
+    python mirror.py --blast-radius <id> # real transitive dependent chain + real Lambda traffic
+    python mirror.py --full-story <id> # explain + blast-radius + rewind + rollback + diff, chained
 
 This is the only file that does I/O (AWS calls via graph_builder, stdout).
 graph_builder.build_graph() reads your real AWS account. decide() is pure —
@@ -47,6 +48,7 @@ from graph_builder import build_graph, dependents_of
 from reversibility import reversibility_of
 from rollback import rollback_plan_for
 from future_diff import future_diff
+from blast_radius import blast_radius
 
 
 def risk_score_from_activity(days_since_activity):
@@ -162,6 +164,28 @@ def print_future_diff(graph, resource_id, action="delete"):
         print("\n  DOWNSTREAM: no real dependents — nothing else would be affected")
 
 
+def print_blast_radius(graph, resource_id):
+    if resource_id not in graph["nodes"]:
+        print(f"unknown resource: {resource_id}", file=sys.stderr)
+        sys.exit(1)
+
+    chain = blast_radius(graph, resource_id)
+
+    print(f"BLAST RADIUS: {resource_id}\n")
+    if not chain:
+        print("  no transitive dependents — nothing downstream would be affected")
+        return
+
+    print(f"  {len(chain)} real transitive dependent(s):")
+    for entry in chain:
+        line = f"    hop {entry['hop']}: {entry['resource']}"
+        if "invocations_90d" in entry:
+            inv = entry["invocations_90d"]
+            inv_str = str(inv) if inv is not None else "unknown (CloudWatch read failed)"
+            line += f"  — real 90-day invocations: {inv_str}"
+        print(line)
+
+
 def rewind(graph, policies, resource_id, action="delete"):
     if resource_id not in graph["nodes"]:
         print(f"unknown resource: {resource_id}", file=sys.stderr)
@@ -208,13 +232,16 @@ def full_story(graph, policies, resource_id, action="delete"):
     print("\n--- 1. VERDICT & WHY ---\n")
     explain(graph, policies, resource_id, action)
 
-    print("\n--- 2. WHAT IF THE KEY FACT WERE DIFFERENT? (counterfactual rewind) ---\n")
+    print("\n--- 2. HOW FAR DOES THIS REACH? (blast radius) ---\n")
+    print_blast_radius(graph, resource_id)
+
+    print("\n--- 3. WHAT IF THE KEY FACT WERE DIFFERENT? (counterfactual rewind) ---\n")
     rewind(graph, policies, resource_id, action)
 
-    print("\n--- 3. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
+    print("\n--- 4. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
     rollback_plan(graph, resource_id)
 
-    print("\n--- 4. WHAT BREAKS, MECHANICALLY, IF THIS RUNS? (future diff) ---\n")
+    print("\n--- 5. WHAT BREAKS, MECHANICALLY, IF THIS RUNS? (future diff) ---\n")
     print_future_diff(graph, resource_id, action)
 
     print("\n" + sep)
@@ -314,8 +341,10 @@ def main():
                          help="show real recovery facts for one resource (versioning/PITR/versions/rule definition)")
     parser.add_argument("--diff", metavar="RESOURCE_ID",
                          help="show the real before/after diff for one resource and its real dependents")
+    parser.add_argument("--blast-radius", metavar="RESOURCE_ID",
+                         help="show the real transitive dependent chain and real Lambda traffic in it")
     parser.add_argument("--full-story", metavar="RESOURCE_ID",
-                         help="chain explain + rewind + rollback + diff into one narrative report")
+                         help="chain explain + blast-radius + rewind + rollback + diff into one narrative report")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
     parser.add_argument("--bedrock-report", action="store_true",
                          help="also generate a plain-English summary via Bedrock (Claude)")
@@ -339,6 +368,8 @@ def main():
         rollback_plan(graph, args.rollback)
     elif args.diff:
         print_future_diff(graph, args.diff, args.action)
+    elif args.blast_radius:
+        print_blast_radius(graph, args.blast_radius)
     elif args.full_story:
         full_story(graph, policies, args.full_story, args.action)
     else:
