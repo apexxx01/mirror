@@ -61,6 +61,9 @@ python mirror.py --rollback s3:mirror-demo-archive-2023-<your-account-suffix>
 # 4c. Future diff — real before/after diff for this resource + its real dependents
 python mirror.py --diff s3:mirror-demo-archive-2023-<your-account-suffix>
 
+# 4d. Full story — explain + rewind + rollback + diff, chained into one narrative
+python mirror.py --full-story s3:mirror-demo-archive-2023-<your-account-suffix>
+
 # 5. Clean up everything this created
 python setup_sandbox.py --teardown
 ```
@@ -80,6 +83,17 @@ python mirror.py --graph-file graph.json
 (`decide.py` never calls AWS itself, so `--graph-file` mode is instant and
 fully reproducible — useful for rehearsing the demo without hitting API
 rate limits or waiting on CloudWatch.)
+
+## Full story
+
+`python mirror.py --full-story <id>` chains `--explain`, `--rewind`,
+`--rollback`, and `--diff` into one narrative report for a single
+resource: verdict and why, what would change if the key fact were
+different, what real recovery mechanism already exists, and exactly what
+breaks mechanically if the action runs. No new AWS calls and no new
+logic — it's the same four independently-verified functions, presented as
+one coherent story instead of four separate flags. Built for the demo
+video: one command tells the whole story a judge needs to see.
 
 ## Future diff
 

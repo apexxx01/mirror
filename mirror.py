@@ -6,6 +6,7 @@ Mirror — driver script.
     python mirror.py --rewind <id>   # Black Box: counterfactual replay for one resource
     python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
     python mirror.py --diff <id>     # real before/after diff for this resource + its real dependents
+    python mirror.py --full-story <id> # explain + rewind + rollback + diff, chained into one narrative
 
 This is the only file that does I/O (AWS calls via graph_builder, stdout).
 graph_builder.build_graph() reads your real AWS account. decide() is pure —
@@ -185,6 +186,40 @@ def rewind(graph, policies, resource_id, action="delete"):
         print(f"  IF this resource had a dependent -> {cf['verdict']}")
 
 
+def full_story(graph, policies, resource_id, action="delete"):
+    """
+    Chains explain + rewind + rollback_plan + print_future_diff into one
+    narrative for a single resource. No new AWS calls or new logic — this
+    is purely presentation over the exact same four functions above, each
+    already independently verified live. Built for the 3-minute demo video:
+    one command answers verdict-and-why, what-if, what-recovery-exists, and
+    what-breaks-mechanically in a single read instead of four separate
+    invocations.
+    """
+    if resource_id not in graph["nodes"]:
+        print(f"unknown resource: {resource_id}", file=sys.stderr)
+        sys.exit(1)
+
+    sep = "=" * 87
+    print(sep)
+    print(f"MIRROR FULL STORY: {resource_id}  (action: {action})")
+    print(sep)
+
+    print("\n--- 1. VERDICT & WHY ---\n")
+    explain(graph, policies, resource_id, action)
+
+    print("\n--- 2. WHAT IF THE KEY FACT WERE DIFFERENT? (counterfactual rewind) ---\n")
+    rewind(graph, policies, resource_id, action)
+
+    print("\n--- 3. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
+    rollback_plan(graph, resource_id)
+
+    print("\n--- 4. WHAT BREAKS, MECHANICALLY, IF THIS RUNS? (future diff) ---\n")
+    print_future_diff(graph, resource_id, action)
+
+    print("\n" + sep)
+
+
 DATA_KEY = "mirror-latest.json"
 
 
@@ -279,6 +314,8 @@ def main():
                          help="show real recovery facts for one resource (versioning/PITR/versions/rule definition)")
     parser.add_argument("--diff", metavar="RESOURCE_ID",
                          help="show the real before/after diff for one resource and its real dependents")
+    parser.add_argument("--full-story", metavar="RESOURCE_ID",
+                         help="chain explain + rewind + rollback + diff into one narrative report")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
     parser.add_argument("--bedrock-report", action="store_true",
                          help="also generate a plain-English summary via Bedrock (Claude)")
@@ -302,6 +339,8 @@ def main():
         rollback_plan(graph, args.rollback)
     elif args.diff:
         print_future_diff(graph, args.diff, args.action)
+    elif args.full_story:
+        full_story(graph, policies, args.full_story, args.action)
     else:
         results = evaluate_all(graph, policies, args.action)
         print_report(results)
