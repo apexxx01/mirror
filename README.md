@@ -61,7 +61,10 @@ python mirror.py --rollback s3:mirror-demo-archive-2023-<your-account-suffix>
 # 4c. Future diff — real before/after diff for this resource + its real dependents
 python mirror.py --diff s3:mirror-demo-archive-2023-<your-account-suffix>
 
-# 4d. Full story — explain + rewind + rollback + diff, chained into one narrative
+# 4d. Blast radius — real transitive dependent chain + real Lambda traffic
+python mirror.py --blast-radius s3:mirror-demo-archive-2023-<your-account-suffix>
+
+# 4e. Full story — explain + blast-radius + rewind + rollback + diff, chained
 python mirror.py --full-story s3:mirror-demo-archive-2023-<your-account-suffix>
 
 # 5. Clean up everything this created
@@ -84,16 +87,34 @@ python mirror.py --graph-file graph.json
 fully reproducible — useful for rehearsing the demo without hitting API
 rate limits or waiting on CloudWatch.)
 
+## Blast radius
+
+`python mirror.py --blast-radius <id>` walks the real dependency graph
+transitively — not just direct dependents like the main report shows, but
+everything that depends on THOSE too — via `blast_radius.py`. Each hop is
+a real edge `graph_builder.py` already found; nothing is fabricated. For
+every Lambda function found in the chain, it also pulls the function's
+real total invocation count over the last 90 days from CloudWatch (the
+same metric `graph_builder.py` already reads for activity recency, here
+summed instead of just checked for presence) — the one real number
+allowed to stand in for "how much this matters." No customer count,
+revenue figure, or downtime estimate is ever attached, since none of
+those are derivable from real AWS metadata; a non-Lambda resource in the
+chain is just counted, honestly, with no invented traffic number forced
+onto it.
+
 ## Full story
 
-`python mirror.py --full-story <id>` chains `--explain`, `--rewind`,
-`--rollback`, and `--diff` into one narrative report for a single
-resource: verdict and why, what would change if the key fact were
-different, what real recovery mechanism already exists, and exactly what
-breaks mechanically if the action runs. No new AWS calls and no new
-logic — it's the same four independently-verified functions, presented as
-one coherent story instead of four separate flags. Built for the demo
-video: one command tells the whole story a judge needs to see.
+`python mirror.py --full-story <id>` chains `--explain`, `--blast-radius`,
+`--rewind`, `--rollback`, and `--diff` into one narrative report for a
+single resource: verdict and why, how far the real dependency chain
+reaches, what would change if the key fact were different, what real
+recovery mechanism already exists, and exactly what breaks mechanically
+if the action runs. No new AWS calls and no new logic beyond what
+blast-radius already adds — it's the same five independently-verified
+functions, presented as one coherent story instead of five separate
+flags. Built for the demo video: one command tells the whole story a
+judge needs to see.
 
 ## Future diff
 
