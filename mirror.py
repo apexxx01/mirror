@@ -4,6 +4,7 @@ Mirror — driver script.
     python mirror.py                 # analyze every deletable resource
     python mirror.py --explain <id>  # "why not?" — full reasoning for one resource
     python mirror.py --rewind <id>   # Black Box: counterfactual replay for one resource
+    python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
 
 This is the only file that does I/O (AWS calls via graph_builder, stdout).
 graph_builder.build_graph() reads your real AWS account. decide() is pure —
@@ -42,6 +43,7 @@ from botocore.exceptions import ClientError
 from decide import counterfactual, decide, load_policies
 from graph_builder import build_graph, dependents_of
 from reversibility import reversibility_of
+from rollback import rollback_plan_for
 
 
 def risk_score_from_activity(days_since_activity):
@@ -105,6 +107,7 @@ def explain(graph, policies, resource_id, action="delete"):
     print(f"  reversibility:       {rev['level']} — {rev['reason']}")
     print(f"  cedar decision:      {verdict['cedar_decision']}")
     print(f"  cedar reasons:       {verdict['cedar_reasons']}")
+    print(f"  rollback plan:       run `python mirror.py --rollback {resource_id}` for real recovery facts")
 
     if verdict["verdict"] == "BLOCKED":
         print("\n  BLOCKED BECAUSE:")
@@ -116,6 +119,22 @@ def explain(graph, policies, resource_id, action="delete"):
     else:
         print("\n  NEEDS REVIEW BECAUSE: no dependents found, but risk score is high")
         print("    enough that Mirror isn't confident — a human should look.")
+
+
+def rollback_plan(graph, resource_id):
+    if resource_id not in graph["nodes"]:
+        print(f"unknown resource: {resource_id}", file=sys.stderr)
+        sys.exit(1)
+
+    node = graph["nodes"][resource_id]
+    plan = rollback_plan_for(node["type"], node["name"])
+
+    print(f"ROLLBACK PLAN: {resource_id}\n")
+    if plan["available"]:
+        for step in plan["steps"]:
+            print(f"  - {step}")
+    else:
+        print(f"  NO ROLLBACK PATH: {plan['reason']}")
 
 
 def rewind(graph, policies, resource_id, action="delete"):
@@ -232,6 +251,8 @@ def main():
     parser.add_argument("--action", default="delete")
     parser.add_argument("--explain", metavar="RESOURCE_ID")
     parser.add_argument("--rewind", metavar="RESOURCE_ID")
+    parser.add_argument("--rollback", metavar="RESOURCE_ID",
+                         help="show real recovery facts for one resource (versioning/PITR/versions/rule definition)")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
     parser.add_argument("--bedrock-report", action="store_true",
                          help="also generate a plain-English summary via Bedrock (Claude)")
@@ -251,6 +272,8 @@ def main():
         explain(graph, policies, args.explain, args.action)
     elif args.rewind:
         rewind(graph, policies, args.rewind, args.action)
+    elif args.rollback:
+        rollback_plan(graph, args.rollback)
     else:
         results = evaluate_all(graph, policies, args.action)
         print_report(results)
