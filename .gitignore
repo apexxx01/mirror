@@ -1,0 +1,6 @@
+.DS_Store
+AWSCLIV2.pkg
+__pycache__/
+*.pyc
+.venv/
+venv/
