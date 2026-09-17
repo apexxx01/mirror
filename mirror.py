@@ -32,11 +32,16 @@ recency never gets a vote once a real dependent exists.
 """
 
 import argparse
+import datetime
 import json
 import sys
 
+import boto3
+from botocore.exceptions import ClientError
+
 from decide import counterfactual, decide, load_policies
 from graph_builder import build_graph, dependents_of
+from reversibility import reversibility_of
 
 
 def risk_score_from_activity(days_since_activity):
@@ -56,6 +61,7 @@ def evaluate_all(graph, policies, action="delete"):
         verdict["dependents"] = deps
         verdict["node_type"] = node["type"]
         verdict["node_name"] = node["name"]
+        verdict["reversibility"] = reversibility_of(node["type"], node["name"])
         results.append(verdict)
     return results
 
@@ -64,10 +70,10 @@ def print_report(results):
     order = {"BLOCKED": 0, "NEEDS_REVIEW": 1, "SAFE": 2}
     results = sorted(results, key=lambda r: order.get(r["verdict"], 3))
 
-    print(f"{'VERDICT':<14} {'RESOURCE':<45} {'DEPS':<5} {'RISK':<5}")
-    print("-" * 75)
+    print(f"{'VERDICT':<14} {'RESOURCE':<45} {'DEPS':<5} {'RISK':<5} {'REVERSIBLE':<10}")
+    print("-" * 87)
     for r in results:
-        print(f"{r['verdict']:<14} {r['resource']:<45} {len(r['dependents']):<5} {r['risk_score']:<5}")
+        print(f"{r['verdict']:<14} {r['resource']:<45} {len(r['dependents']):<5} {r['risk_score']:<5} {r['reversibility']['level']:<10}")
 
     blocked = [r for r in results if r["verdict"] == "BLOCKED"]
     if blocked:
@@ -87,6 +93,7 @@ def explain(graph, policies, resource_id, action="delete"):
     deps = dependents_of(graph, resource_id)
     risk = risk_score_from_activity(node.get("days_since_activity"))
     verdict = decide(action, resource_id, len(deps), risk, policies)
+    rev = reversibility_of(node["type"], node["name"])
 
     print(f"WHY CAN'T I {action.upper()} {resource_id}?\n")
     print(f"  verdict:            {verdict['verdict']}")
@@ -95,6 +102,7 @@ def explain(graph, policies, resource_id, action="delete"):
         print(f"    - {dep}")
     print(f"  days since activity: {node.get('days_since_activity')}")
     print(f"  risk score:          {risk}/100")
+    print(f"  reversibility:       {rev['level']} — {rev['reason']}")
     print(f"  cedar decision:      {verdict['cedar_decision']}")
     print(f"  cedar reasons:       {verdict['cedar_reasons']}")
 
@@ -134,12 +142,101 @@ def rewind(graph, policies, resource_id, action="delete"):
         print(f"  IF this resource had a dependent -> {cf['verdict']}")
 
 
+DATA_KEY = "mirror-latest.json"
+
+
+def publish_to_s3(results, bucket_name, bedrock_summary=None, region=None):
+    """
+    Publish this analysis run as a public JSON snapshot, for the Amplify
+    frontend to fetch and render. This is real output from a real run —
+    the frontend never invents or simulates anything, it just displays
+    whatever this function actually wrote.
+
+    Idempotent: creates the bucket if it doesn't exist yet, and only ever
+    touches the single DATA_KEY object — safe to re-run every time you
+    want to refresh what the frontend shows.
+
+    Returns the public HTTPS URL of the published JSON.
+    """
+    region = region or boto3.Session().region_name or "us-east-1"
+    s3 = boto3.client("s3", region_name=region)
+
+    try:
+        s3.head_bucket(Bucket=bucket_name)
+    except ClientError:
+        if region == "us-east-1":
+            s3.create_bucket(Bucket=bucket_name)
+        else:
+            s3.create_bucket(
+                Bucket=bucket_name,
+                CreateBucketConfiguration={"LocationConstraint": region},
+            )
+        # New buckets default to blocking all public access — this bucket
+        # exists specifically to serve one public JSON file to the frontend,
+        # so that default has to be turned off before a bucket policy can
+        # actually grant public read.
+        s3.put_public_access_block(
+            Bucket=bucket_name,
+            PublicAccessBlockConfiguration={
+                "BlockPublicAcls": False,
+                "IgnorePublicAcls": False,
+                "BlockPublicPolicy": False,
+                "RestrictPublicBuckets": False,
+            },
+        )
+
+    # Public read on just this one key — not the whole bucket.
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Sid": "PublicReadMirrorData",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": f"arn:aws:s3:::{bucket_name}/{DATA_KEY}",
+        }],
+    }
+    s3.put_bucket_policy(Bucket=bucket_name, Policy=json.dumps(policy))
+
+    # Let the Amplify-hosted frontend fetch this cross-origin.
+    s3.put_bucket_cors(
+        Bucket=bucket_name,
+        CORSConfiguration={
+            "CORSRules": [{
+                "AllowedMethods": ["GET"],
+                "AllowedOrigins": ["*"],
+                "AllowedHeaders": ["*"],
+            }]
+        },
+    )
+
+    payload = {
+        "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "results": results,
+        "bedrock_summary": bedrock_summary,
+    }
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=DATA_KEY,
+        Body=json.dumps(payload, indent=2).encode("utf-8"),
+        ContentType="application/json",
+        CacheControl="no-cache",  # each publish should be visible immediately, not cached stale
+    )
+
+    url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{DATA_KEY}"
+    return url
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--action", default="delete")
     parser.add_argument("--explain", metavar="RESOURCE_ID")
     parser.add_argument("--rewind", metavar="RESOURCE_ID")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
+    parser.add_argument("--bedrock-report", action="store_true",
+                         help="also generate a plain-English summary via Bedrock (Claude)")
+    parser.add_argument("--publish-s3", metavar="BUCKET_NAME",
+                         help="publish this run's results as JSON to S3 for the frontend to read")
     args = parser.parse_args()
 
     if args.graph_file:
@@ -157,6 +254,17 @@ def main():
     else:
         results = evaluate_all(graph, policies, args.action)
         print_report(results)
+
+        bedrock_summary = None
+        if args.bedrock_report:
+            from bedrock_report import generate_report_safe
+            bedrock_summary = generate_report_safe(results)
+            print("\n--- BEDROCK SUMMARY ---")
+            print(bedrock_summary)
+
+        if args.publish_s3:
+            url = publish_to_s3(results, args.publish_s3, bedrock_summary=bedrock_summary)
+            print(f"\nPublished to: {url}")
 
 
 if __name__ == "__main__":
