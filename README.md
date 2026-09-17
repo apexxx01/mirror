@@ -75,6 +75,20 @@ python mirror.py --graph-file graph.json
 fully reproducible — useful for rehearsing the demo without hitting API
 rate limits or waiting on CloudWatch.)
 
+## Bedrock report (optional)
+
+Turns the verdict table into a plain-English summary via Bedrock (Claude
+Haiku, using the global inference profile required for India regions —
+see comments in `bedrock_report.py`). Requires enabling model access once:
+AWS Console → Bedrock → Model access → request access to Anthropic Claude.
+
+```bash
+python mirror.py --bedrock-report
+```
+
+Degrades gracefully (prints a clear message, doesn't crash the rest of the
+run) if model access hasn't been granted yet.
+
 ## Why the architecture looks like this
 
 `decide()` is a pure function on purpose. It takes evidence
