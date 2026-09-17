@@ -55,6 +55,9 @@ python mirror.py --explain s3:mirror-demo-archive-2023-<your-account-suffix>
 # 4. Counterfactual replay (Black Box) — "what if this had no dependents?"
 python mirror.py --rewind s3:mirror-demo-archive-2023-<your-account-suffix>
 
+# 4b. Rollback plan — real recovery facts if it gets deleted anyway
+python mirror.py --rollback s3:mirror-demo-archive-2023-<your-account-suffix>
+
 # 5. Clean up everything this created
 python setup_sandbox.py --teardown
 ```
@@ -74,6 +77,20 @@ python mirror.py --graph-file graph.json
 (`decide.py` never calls AWS itself, so `--graph-file` mode is instant and
 fully reproducible — useful for rehearsing the demo without hitting API
 rate limits or waiting on CloudWatch.)
+
+## Rollback plan
+
+`python mirror.py --rollback <id>` answers "if Mirror is wrong and this
+gets deleted anyway, what can actually be recovered?" using only real AWS
+recovery signals read live via boto3 — S3 versioning + version/delete-marker
+counts, DynamoDB point-in-time-recovery restore windows, Lambda published
+version numbers, and (for EventBridge rules) the rule's own live
+definition, captured as the rollback plan itself. No recovery-time
+estimate or confidence percentage is invented — every fact shown is a real
+API response value, and resources with no real recovery path get an
+explicit "no rollback path" instead of a guess. Built on the same real
+signals as the reversibility score (`reversibility.py`), which is also
+shown in the main report table and in `--explain`.
 
 ## Bedrock report (optional)
 
