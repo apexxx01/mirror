@@ -34,7 +34,7 @@ export function VerdictPills({ selected, onChange, counts }: VerdictPillsProps) 
             whileTap={{ scale: 0.94 }}
             animate={{ scale: active ? 1.04 : 1 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
-            className={`border px-4 py-2 font-mono text-xs uppercase tracking-widest transition-colors duration-150 ${
+            className={`border px-4 py-2 font-mono text-xs uppercase tracking-widest outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-hazard focus-visible:ring-offset-2 focus-visible:ring-offset-void ${
               active ? pill.activeClass : "border-white/30 text-white/70 hover:border-white/60"
             }`}
           >

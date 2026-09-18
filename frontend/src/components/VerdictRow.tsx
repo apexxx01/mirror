@@ -20,7 +20,7 @@ export function VerdictRow({ result }: VerdictRowProps) {
       <button
         data-testid="row-toggle"
         onClick={() => setOpen((o) => !o)}
-        className="grid w-full grid-cols-[auto_1fr_auto_auto] items-center gap-4 px-4 py-3 text-left font-mono text-sm hover:bg-white/5 transition-colors duration-150"
+        className="grid w-full grid-cols-[auto_1fr_auto_auto] items-center gap-4 px-4 py-3 text-left font-mono text-sm outline-none transition-colors duration-150 hover:bg-white/5 active:bg-white/10 focus-visible:bg-white/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hazard"
       >
         <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest ${BADGE[result.verdict]}`}>
           {result.verdict.replace("_", " ")}
