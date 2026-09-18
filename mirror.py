@@ -3,7 +3,7 @@ Mirror — driver script.
 
     python mirror.py                 # analyze every deletable resource
     python mirror.py --explain <id>  # "why not?" — full reasoning for one resource
-    python mirror.py --rewind <id>   # Black Box: counterfactual replay for one resource
+    python mirror.py --rewind <id>   # Black Box: real decision matrix across named hypothetical evidence states
     python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
     python mirror.py --diff <id>     # real before/after diff for this resource + its real dependents
     python mirror.py --blast-radius <id> # real transitive dependent chain + real Lambda traffic
@@ -43,7 +43,7 @@ import sys
 import boto3
 from botocore.exceptions import ClientError
 
-from decide import counterfactual, decide, load_policies
+from decide import decide, load_policies
 from graph_builder import build_graph, dependents_of
 from reversibility import reversibility_of
 from rollback import rollback_plan_for
@@ -187,6 +187,14 @@ def print_blast_radius(graph, resource_id):
 
 
 def rewind(graph, policies, resource_id, action="delete"):
+    """
+    A real decision matrix: the same pure decide() function, run through
+    the same real Cedar pipeline, across a small set of named hypothetical
+    evidence states — all derived by swapping fields of the base evidence
+    actually observed for this resource, never a new data source. This is
+    Mirror's counterfactual replay, generalized from a single swap to a
+    full matrix of the scenarios worth asking about.
+    """
     if resource_id not in graph["nodes"]:
         print(f"unknown resource: {resource_id}", file=sys.stderr)
         sys.exit(1)
@@ -194,20 +202,30 @@ def rewind(graph, policies, resource_id, action="delete"):
     node = graph["nodes"][resource_id]
     deps = dependents_of(graph, resource_id)
     risk = risk_score_from_activity(node.get("days_since_activity"))
-    base_evidence = {"dependents_count": len(deps), "risk_score": risk}
 
-    actual = decide(action, resource_id, len(deps), risk, policies)
-    print(f"REWIND: {resource_id}\n")
-    print(f"  ACTUAL: dependents={len(deps)} risk={risk} -> {actual['verdict']}")
+    scenarios = [
+        ("as observed", len(deps), risk),
+        ("if zero dependents", 0, risk),
+        ("if risk score < 50", len(deps), 0),
+        ("if both were true", 0, 0),
+    ]
 
-    if len(deps) > 0:
-        cf = counterfactual(action, resource_id, base_evidence, policies, dependents_count=0)
-        print(f"  IF this resource had zero dependents -> {cf['verdict']}")
-        print("  (this is the exact gap a naive activity-only agent would have missed)")
-    else:
-        cf = counterfactual(action, resource_id, base_evidence, policies,
-                             dependents_count=max(1, len(deps) + 1))
-        print(f"  IF this resource had a dependent -> {cf['verdict']}")
+    print(f"DECISION MATRIX: {resource_id}\n")
+    print(f"{'SCENARIO':<22} {'DEPS':<6} {'RISK':<6} {'VERDICT':<14}")
+    print("-" * 50)
+    rows = []
+    for name, dep_count, risk_val in scenarios:
+        result = decide(action, resource_id, dep_count, risk_val, policies)
+        rows.append((name, dep_count, risk_val, result["verdict"]))
+        print(f"{name:<22} {dep_count:<6} {risk_val:<6} {result['verdict']:<14}")
+
+    print("\n  every row is the SAME real Cedar policy evaluated on a different")
+    print("  hypothetical evidence state — no new data source, only swaps of")
+    print("  fields already observed in this run")
+
+    if len(deps) > 0 and rows[0][3] != rows[1][3]:
+        print("\n  (the gap between 'as observed' and 'if zero dependents' is exactly")
+        print("   what a naive activity-only agent would have missed)")
 
 
 def full_story(graph, policies, resource_id, action="delete"):
@@ -235,7 +253,7 @@ def full_story(graph, policies, resource_id, action="delete"):
     print("\n--- 2. HOW FAR DOES THIS REACH? (blast radius) ---\n")
     print_blast_radius(graph, resource_id)
 
-    print("\n--- 3. WHAT IF THE KEY FACT WERE DIFFERENT? (counterfactual rewind) ---\n")
+    print("\n--- 3. WHAT IF THE KEY FACTS WERE DIFFERENT? (decision matrix) ---\n")
     rewind(graph, policies, resource_id, action)
 
     print("\n--- 4. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
