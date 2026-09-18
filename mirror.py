@@ -7,7 +7,8 @@ Mirror — driver script.
     python mirror.py --rollback <id> # real recovery facts if it gets deleted anyway
     python mirror.py --diff <id>     # real before/after diff for this resource + its real dependents
     python mirror.py --blast-radius <id> # real transitive dependent chain + real Lambda traffic
-    python mirror.py --full-story <id> # explain + blast-radius + rewind + rollback + diff, chained
+    python mirror.py --adversarial <id> # real historical error/throttle evidence for the blast-radius chain
+    python mirror.py --full-story <id> # explain + blast-radius + adversarial + rewind + rollback + diff, chained
 
 This is the only file that does I/O (AWS calls via graph_builder, stdout).
 graph_builder.build_graph() reads your real AWS account. decide() is pure —
@@ -49,6 +50,7 @@ from reversibility import reversibility_of
 from rollback import rollback_plan_for
 from future_diff import future_diff
 from blast_radius import blast_radius
+from adversarial import adversarial_check
 
 
 def risk_score_from_activity(days_since_activity):
@@ -186,6 +188,48 @@ def print_blast_radius(graph, resource_id):
         print(line)
 
 
+def print_adversarial(graph, resource_id):
+    """
+    Real historical-reliability evidence, not a simulated failure test.
+    Mirror asks "does this chain have a track record of problems," and
+    reports whatever CloudWatch actually says — including, honestly, when
+    the answer is no evidence either way.
+    """
+    if resource_id not in graph["nodes"]:
+        print(f"unknown resource: {resource_id}", file=sys.stderr)
+        sys.exit(1)
+
+    entries = adversarial_check(graph, resource_id)
+
+    print(f"ADVERSARIAL CHECK (real historical evidence): {resource_id}\n")
+    print("  this is real CloudWatch evidence over the last 90 days, not a")
+    print("  simulated failure test — Mirror asks 'does this chain have a track")
+    print("  record of problems,' never 'what if I invented one'\n")
+
+    if not entries:
+        print("  no Lambda functions in this resource or its blast-radius chain —")
+        print("  no reliability signal to check")
+        return
+
+    for e in entries:
+        err = e["errors"] if e["errors"] is not None else "unknown (CloudWatch read failed)"
+        thr = e["throttles"] if e["throttles"] is not None else "unknown (CloudWatch read failed)"
+        label = "this resource" if e["hop"] == 0 else f"hop {e['hop']}"
+        print(f"  {label}: {e['resource']}  — errors: {err}, throttles: {thr} (last 90 days)")
+
+    total_errors = sum(e["errors"] for e in entries if e["errors"] is not None)
+    total_throttles = sum(e["throttles"] for e in entries if e["throttles"] is not None)
+
+    print()
+    if total_errors > 0 or total_throttles > 0:
+        print(f"  REAL HISTORICAL INSTABILITY: {total_errors} error(s), {total_throttles} "
+              f"throttle(s) across this chain in the last 90 days")
+    else:
+        print("  NO HISTORICAL ERROR EVIDENCE FOUND — this chain has zero recorded errors")
+        print("  or throttles in the last 90 days. This is a real negative result, not")
+        print("  a claim that it 'passed' a test that was never run.")
+
+
 def rewind(graph, policies, resource_id, action="delete"):
     """
     A real decision matrix: the same pure decide() function, run through
@@ -253,13 +297,16 @@ def full_story(graph, policies, resource_id, action="delete"):
     print("\n--- 2. HOW FAR DOES THIS REACH? (blast radius) ---\n")
     print_blast_radius(graph, resource_id)
 
-    print("\n--- 3. WHAT IF THE KEY FACTS WERE DIFFERENT? (decision matrix) ---\n")
+    print("\n--- 3. DOES THIS CHAIN HAVE A TRACK RECORD OF PROBLEMS? (real historical evidence) ---\n")
+    print_adversarial(graph, resource_id)
+
+    print("\n--- 4. WHAT IF THE KEY FACTS WERE DIFFERENT? (decision matrix) ---\n")
     rewind(graph, policies, resource_id, action)
 
-    print("\n--- 4. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
+    print("\n--- 5. WHAT RECOVERY ALREADY EXISTS? (rollback plan) ---\n")
     rollback_plan(graph, resource_id)
 
-    print("\n--- 5. WHAT BREAKS, MECHANICALLY, IF THIS RUNS? (future diff) ---\n")
+    print("\n--- 6. WHAT BREAKS, MECHANICALLY, IF THIS RUNS? (future diff) ---\n")
     print_future_diff(graph, resource_id, action)
 
     print("\n" + sep)
@@ -361,8 +408,10 @@ def main():
                          help="show the real before/after diff for one resource and its real dependents")
     parser.add_argument("--blast-radius", metavar="RESOURCE_ID",
                          help="show the real transitive dependent chain and real Lambda traffic in it")
+    parser.add_argument("--adversarial", metavar="RESOURCE_ID",
+                         help="real historical CloudWatch error/throttle evidence for the blast-radius chain")
     parser.add_argument("--full-story", metavar="RESOURCE_ID",
-                         help="chain explain + blast-radius + rewind + rollback + diff into one narrative report")
+                         help="chain explain + blast-radius + adversarial + rewind + rollback + diff into one narrative report")
     parser.add_argument("--graph-file", help="use a saved graph.json instead of hitting AWS live")
     parser.add_argument("--bedrock-report", action="store_true",
                          help="also generate a plain-English summary via Bedrock (Claude)")
@@ -388,6 +437,8 @@ def main():
         print_future_diff(graph, args.diff, args.action)
     elif args.blast_radius:
         print_blast_radius(graph, args.blast_radius)
+    elif args.adversarial:
+        print_adversarial(graph, args.adversarial)
     elif args.full_story:
         full_story(graph, policies, args.full_story, args.action)
     else:

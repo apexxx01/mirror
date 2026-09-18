@@ -65,7 +65,10 @@ python mirror.py --diff s3:mirror-demo-archive-2023-<your-account-suffix>
 # 4d. Blast radius — real transitive dependent chain + real Lambda traffic
 python mirror.py --blast-radius s3:mirror-demo-archive-2023-<your-account-suffix>
 
-# 4e. Full story — explain + blast-radius + rewind + rollback + diff, chained
+# 4e. Adversarial check — real historical error/throttle evidence, not a simulated test
+python mirror.py --adversarial s3:mirror-demo-archive-2023-<your-account-suffix>
+
+# 4f. Full story — explain + blast-radius + adversarial + rewind + rollback + diff, chained
 python mirror.py --full-story s3:mirror-demo-archive-2023-<your-account-suffix>
 
 # 5. Clean up everything this created
@@ -104,18 +107,37 @@ those are derivable from real AWS metadata; a non-Lambda resource in the
 chain is just counted, honestly, with no invented traffic number forced
 onto it.
 
+## Adversarial check (real historical evidence, not a simulated test)
+
+The brainstorm's original "adversarial failure injection" idea wanted to
+invent hypothetical failure conditions — a network timeout, a stale
+cache, a traffic spike — none of which Mirror has any evidence for, so
+building it that way would have broken the project's own no-fabrication
+rule. `python mirror.py --adversarial <id>` builds the real version
+instead, via `adversarial.py`: for the resource itself (if it's a Lambda)
+and every Lambda in its transitive blast-radius chain, it pulls the real
+total Errors and Throttles from CloudWatch over the last 90 days — same
+API pattern as the invocation count, different metric names. If real
+errors or throttles exist, they're reported with the actual counts. If
+none exist — which is the honest, expected result for this sandbox's
+near-zero-traffic demo functions — Mirror says exactly that:
+"no historical error evidence found," never dressed up as "passed a
+test," since no test ever ran. Mirror is asking whether this chain has a
+track record of problems, not imagining one.
+
 ## Full story
 
 `python mirror.py --full-story <id>` chains `--explain`, `--blast-radius`,
-`--rewind`, `--rollback`, and `--diff` into one narrative report for a
-single resource: verdict and why, how far the real dependency chain
-reaches, what would change if the key fact were different, what real
+`--adversarial`, `--rewind`, `--rollback`, and `--diff` into one narrative
+report for a single resource: verdict and why, how far the real
+dependency chain reaches, whether that chain has a real track record of
+problems, what would change if the key facts were different, what real
 recovery mechanism already exists, and exactly what breaks mechanically
-if the action runs. No new AWS calls and no new logic beyond what
-blast-radius already adds — it's the same five independently-verified
-functions, presented as one coherent story instead of five separate
-flags. Built for the demo video: one command tells the whole story a
-judge needs to see.
+if the action runs. No new AWS calls and no new logic beyond what each
+piece already adds on its own — it's the same six independently-verified
+functions, presented as one coherent story instead of six separate flags.
+Built for the demo video: one command tells the whole story a judge needs
+to see.
 
 ## Future diff
 
