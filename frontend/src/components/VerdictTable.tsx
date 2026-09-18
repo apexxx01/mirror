@@ -27,6 +27,8 @@ export function VerdictTable({ results }: VerdictTableProps) {
   return (
     <section id="verdicts" className="relative z-10 mx-auto max-w-4xl px-6 py-24">
       <motion.div
+        id="blast-radius"
+        className="scroll-mt-32 sm:scroll-mt-24"
         initial={{ opacity: 0, y: 24 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-100px" }}
@@ -44,7 +46,8 @@ export function VerdictTable({ results }: VerdictTableProps) {
         <VerdictPills selected={selected} onChange={setSelected} counts={counts} />
       </motion.div>
       <motion.div
-        className="border border-white/10 backdrop-blur-sm bg-white/[0.02]"
+        id="full-story"
+        className="scroll-mt-32 border border-white/10 backdrop-blur-sm bg-white/[0.02] sm:scroll-mt-24"
         initial={{ opacity: 0, y: 24 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-100px" }}
