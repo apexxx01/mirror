@@ -17,7 +17,19 @@ const CLAIM_OFFSETS = CLAIM_LINES.map((_, i) =>
 
 const LEAD_IN_MS = 260; // a caret alone on black before anything is claimed
 const HOLD_AFTER_CLAIM_MS = 750; // the beat where you believe it
-const STRIKE_SWEEP_MS = 480; // rules sweep through the claim before the verdict
+
+/**
+ * The strike is one duration expressed in two places — a CSS transition and a
+ * JS wait — so it gets one source of truth. STRIKE_TRANSITION_MS is
+ * interpolated into HERO_CSS below; STRIKE_SWEEP_MS is derived from it, so
+ * retuning the sweep can never leave the verdict typing over a rule that is
+ * still moving.
+ */
+const STRIKE_TRANSITION_MS = 460; // one rule's own left-to-right sweep
+const STRIKE_STAGGER_MS = 60; // each line is struck after the one above it
+/** Last rule's start offset + its own sweep, plus a frame of settle. */
+const STRIKE_SWEEP_MS =
+  STRIKE_STAGGER_MS * (CLAIM_LINES.length - 1) + STRIKE_TRANSITION_MS + 20;
 
 /**
  * Cadence, not a metronome. A constant interval reads as machinery; a human
@@ -52,7 +64,7 @@ const HERO_CSS = `
   background: #FF1E1E;
   transform: scaleX(0);
   transform-origin: left center;
-  transition: transform 460ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  transition: transform ${STRIKE_TRANSITION_MS}ms cubic-bezier(0.16, 0.84, 0.24, 1);
   pointer-events: none;
 }
 .mirror-strike[data-struck="true"] { transform: scaleX(1); }
@@ -188,7 +200,16 @@ export function Hero() {
               <span key={line} className="block">
                 <span className="relative inline-block">
                   {shown}
-                  <span className="mirror-strike" data-struck={struck} />
+                  {/*
+                    Staggered so the correction cascades down the claim rather
+                    than stamping all three lines at once — it reads as Mirror
+                    working through the statement line by line.
+                  */}
+                  <span
+                    className="mirror-strike"
+                    data-struck={struck}
+                    style={{ transitionDelay: `${i * STRIKE_STAGGER_MS}ms` }}
+                  />
                 </span>
                 {spaceTyped ? " " : ""}
                 {!struck && i === activeClaimLine ? (
