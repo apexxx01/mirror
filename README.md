@@ -23,9 +23,9 @@ resources this script actually created in your AWS account.
 |---|---|
 | `setup_sandbox.py` | Creates the demo AWS resources (2 buckets, 2 tables, 3 Lambdas, 1 EventBridge rule) with two planted hidden dependencies. Idempotent — safe to re-run. `--teardown` removes everything. |
 | `graph_builder.py` | Builds the real dependency graph from your AWS account via boto3/CloudWatch. No invented edges — every one traces back to an actual `get_function_configuration()` env var or `list_targets_by_rule()` call. |
-| `decide.py` | The pure decision core: `decide(action, resource, dependents_count, risk_score, policies) -> verdict`. Calls Cedar via `cedarpy`. Deterministic — same inputs always produce the same verdict, which is what makes `counterfactual()` (the rewind feature) technically real instead of scripted. |
+| `decide.py` | The pure decision core: `decide(action, resource, dependents_count, risk_score, policies) -> verdict`. Calls Cedar via `cedarpy`. Deterministic — same inputs always produce the same verdict, which is what makes the `--rewind` decision matrix technically real instead of scripted. |
 | `policies/mirror.cedar` | The actual Cedar policy source. `policy0` hard-forbids deleting anything with a real dependent. `policy1` permits deleting anything with zero dependents and a low risk score. Anything else falls to Cedar's implicit deny, which `decide.py` reports as `NEEDS_REVIEW`. |
-| `mirror.py` | Driver script. Ties `graph_builder` + `decide` together into a report, a `--explain` ("why not?") view, and a `--rewind` (counterfactual replay) view. |
+| `mirror.py` | Driver script. Ties `graph_builder` + `decide` together into a report, a `--explain` ("why not?") view, and a `--rewind` decision-matrix view (multiple named hypothetical evidence states run through the same real Cedar pipeline). |
 
 ## Setup
 
@@ -52,7 +52,8 @@ python mirror.py
 # 3. Ask Mirror to explain a specific blocked resource
 python mirror.py --explain s3:mirror-demo-archive-2023-<your-account-suffix>
 
-# 4. Counterfactual replay (Black Box) — "what if this had no dependents?"
+# 4. Decision matrix (Black Box) — same real Cedar pipeline across named
+#    hypothetical evidence states: as observed, zero dependents, risk<50, both
 python mirror.py --rewind s3:mirror-demo-archive-2023-<your-account-suffix>
 
 # 4b. Rollback plan — real recovery facts if it gets deleted anyway
@@ -163,11 +164,12 @@ run) if model access hasn't been granted yet.
 
 `decide()` is a pure function on purpose. It takes evidence
 (`dependents_count`, `risk_score`) and a policy set, and returns a verdict
-— no AWS calls, no clock reads, no hidden state. That's what makes the
-"rewind" feature in `mirror.py --rewind` a *real* counterfactual: swapping
-one field and re-running the exact same function through the exact same
-Cedar policies is a legitimate "what if," not a canned alternate answer
-written in advance.
+— no AWS calls, no clock reads, no hidden state. That's what makes
+`mirror.py --rewind`'s decision matrix a *real* set of counterfactuals:
+each row swaps fields of the base evidence actually observed for this
+resource (never a new data source) and re-runs the exact same function
+through the exact same Cedar policies — a legitimate "what if" per row,
+not a canned alternate answer written in advance.
 
 The risk score itself is the one place Mirror makes a judgment call rather
 than reading a bare fact, and it's fully disclosed in `mirror.py`:
