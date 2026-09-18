@@ -156,7 +156,7 @@ export function Hero() {
   return (
     <section
       id="hero"
-      className="relative z-10 flex min-h-screen flex-col justify-center px-6 pb-20 pt-24 md:px-12 md:pt-32"
+      className="relative z-10 flex min-h-screen scroll-mt-32 flex-col justify-center px-6 pb-20 pt-24 sm:scroll-mt-24 md:px-12 md:pt-32"
     >
       <style>{HERO_CSS}</style>
 
