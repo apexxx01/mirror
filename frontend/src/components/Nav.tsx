@@ -15,7 +15,6 @@ export function Nav() {
       </a>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-xs uppercase tracking-widest text-white/70">
         <a href="#verdicts" className={NAV_LINK_INTERACTION}>Verdicts</a>
-        <a href="#blast-radius" className={NAV_LINK_INTERACTION}>Blast Radius</a>
         <a href="#full-story" className={NAV_LINK_INTERACTION}>Full Story</a>
         <a
           href="https://github.com/apexxx01/mirror"
