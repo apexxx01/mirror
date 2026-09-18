@@ -50,12 +50,24 @@ const SPIN_RATE = 0.05;
 const PULSE_RATE = 0.22;
 /** Pulses are the most per-frame work here; cap them on implausibly large graphs. */
 const MAX_PULSES = 64;
+/**
+ * Pointer-parallax pan, in world units at the graph's depth.
+ *
+ * X spends part of the clearance the right-margin bias buys: a positive camera
+ * x shifts all projected content LEFT, toward the headline, by ~29px at
+ * 1920px wide. That is inside the budget (measured worst-case clearance at
+ * 1920 is 59px *including* this term) but it is not free, so it is named
+ * rather than inlined. Y is free — the headline competes on the horizontal
+ * axis only.
+ */
+const PARALLAX_X = 0.3;
+const PARALLAX_Y = 0.2;
 
 /* ------------------------------------------------------------------ *
  * Layout
  * ------------------------------------------------------------------ */
 
-interface LayoutNode {
+export interface LayoutNode {
   id: string;
   verdict: Verdict;
   /** Real count of resources that break if this one is deleted. */
@@ -67,14 +79,19 @@ interface LayoutNode {
 }
 
 /** Indices into the node array. `from` is the resource; `to` is what breaks. */
-interface LayoutEdge {
+export interface LayoutEdge {
   from: number;
   to: number;
 }
 
-/** Stable per-name value in [0,1). FNV-1a — no Math.random anywhere in here, */
-/** because the same payload must produce the same picture on every reload. */
-function hashUnit(s: string): number {
+/**
+ * Stable per-name value in [0,1). FNV-1a — no Math.random anywhere in here,
+ * because the same payload must produce the same picture on every reload.
+ *
+ * Exported for tests: determinism is a spec constraint, not an implementation
+ * detail, so it is worth locking down.
+ */
+export function hashUnit(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -83,8 +100,8 @@ function hashUnit(s: string): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** Evenly-spaced point i of n on the unit sphere (Fibonacci lattice). */
-function fibonacciPoint(i: number, n: number, out: THREE.Vector3): THREE.Vector3 {
+/** Evenly-spaced point i of n on the unit sphere (Fibonacci lattice). Exported for tests. */
+export function fibonacciPoint(i: number, n: number, out: THREE.Vector3): THREE.Vector3 {
   const k = i + 0.5;
   const phi = Math.acos(clamp(1 - (2 * k) / Math.max(n, 1), -1, 1));
   const theta = Math.PI * (1 + Math.sqrt(5)) * k;
@@ -141,8 +158,13 @@ function lerp(a: number, b: number, t: number): number {
  * Radial depth is data too: anything with real dependents is pulled toward the
  * core, and leaves drift out to the shell. Load-bearing resources sit at the
  * centre of the structure because that is what they are.
+ *
+ * Exported because this function IS the "no decorative nodes" guarantee: node
+ * count and edge count are decided here and nowhere else, so this is where
+ * that constraint is worth locking down in tests rather than re-checking by
+ * eye in a browser.
  */
-function buildLayout(results: MirrorResult[]): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+export function buildLayout(results: MirrorResult[]): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
   const n = results.length;
 
   const indexOf = new Map<string, number>();
@@ -263,7 +285,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     const halfW = viewport.width / 2;
     const halfH = viewport.height / 2;
     const wide = clamp((viewport.width / viewport.height - 0.95) / 0.55, 0, 1);
-    const rx = lerp(halfW * 0.72, Math.min(halfW * 0.3, halfH * 0.5), wide);
+    const rx = lerp(halfW * 0.72, Math.min(halfW * 0.3, halfH * 0.44), wide);
     const ry = lerp(halfH * 0.3, halfH * 0.8, wide);
     return {
       centerX: halfW * lerp(0, 0.52, wide),
@@ -344,8 +366,8 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     const p = pointerRef.current;
     const scrolled = scrollRef.current;
     camTarget.set(
-      reduced ? 0 : p.x * 0.3,
-      reduced ? 0 : -p.y * 0.2,
+      reduced ? 0 : p.x * PARALLAX_X,
+      reduced ? 0 : -p.y * PARALLAX_Y,
       // As the page scrolls past the hero the graph recedes, so it settles
       // into a background behind the verdict table instead of competing.
       BASE_CAMERA_Z + scrolled * 2.4,
@@ -510,10 +532,10 @@ body, #root { background-color: transparent; }
   inset: 0;
   background: linear-gradient(
     to right,
-    rgba(10, 10, 10, 0.97) 0,
-    rgba(10, 10, 10, 0.95) calc(var(--hero-text-edge) * 0.72),
-    rgba(10, 10, 10, 0.55) var(--hero-text-edge),
-    rgba(10, 10, 10, 0) calc(var(--hero-text-edge) + 10vw)
+    rgba(10, 10, 10, 0.975) 0,
+    rgba(10, 10, 10, 0.965) calc(var(--hero-text-edge) * 0.72),
+    rgba(10, 10, 10, 0.86) var(--hero-text-edge),
+    rgba(10, 10, 10, 0) calc(var(--hero-text-edge) + 12vw)
   );
   -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 19%, #000 84%, transparent 99%);
   mask-image: linear-gradient(to bottom, transparent 2%, #000 19%, #000 84%, transparent 99%);
