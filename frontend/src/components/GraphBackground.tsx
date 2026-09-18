@@ -509,22 +509,13 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
  */
 const GRAPH_CSS = `
 /*
-  The -z-10 layer this component renders into only survives if nothing paints
-  a background over it, and index.css gives html, body AND #root the same
-  void. Per CSS painting order, negative-z descendants are painted at step 3,
-  BEFORE the in-flow backgrounds of body and #root at step 4 — so those two
-  fills were burying the entire graph. (Verified in-browser: the scene renders
-  correctly the moment they are cleared.)
-
-  html keeps its fill, and the root element's background is the one that gets
-  propagated to the canvas, i.e. painted behind everything including this
-  layer. So the page is still #0A0A0A top to bottom; body and #root were only
-  ever repeating what html already says.
-
-  Scoped here rather than in index.css so the fix travels with the component
-  that depends on it, and so nothing changes when the graph is not mounted.
+  This component renders into a fixed, -z-10 layer, which only survives if
+  nothing paints an opaque background over it. body and #root are kept
+  transparent in index.css (Task 1) for exactly this reason — see the comment
+  there for the full CSS-painting-order explanation. html keeps the real
+  #0A0A0A fill, so the page still reads as void top to bottom whether or not
+  this component is mounted.
 */
-body, #root { background-color: transparent; }
 
 .mirror-graph-veil {
   --hero-text-edge: calc(48px + 7.87 * clamp(2rem, 10.3vw, 8.75rem));
