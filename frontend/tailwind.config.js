@@ -13,6 +13,10 @@ export default {
         review: "#EAB308",
         safe: "#16A34A",
         void: "#0A0A0A",
+        ink: "#f2f2ee",
+      },
+      backdropBlur: {
+        glass: "20px",
       },
     },
   },

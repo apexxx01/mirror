@@ -32,7 +32,7 @@ export function Nav({ hasFullStory }: NavProps) {
           href="https://github.com/apexxx01/mirror"
           target="_blank"
           rel="noreferrer"
-          className="border border-white/30 px-3 py-1.5 outline-none transition-colors duration-200 hover:border-hazard hover:text-hazard active:border-hazard/60 active:text-hazard/60 focus-visible:border-hazard focus-visible:text-hazard focus-visible:ring-2 focus-visible:ring-hazard focus-visible:ring-offset-2 focus-visible:ring-offset-void"
+          className="rounded-full border border-white/30 px-3 py-1.5 outline-none transition-colors duration-200 hover:border-hazard hover:text-hazard active:border-hazard/60 active:text-hazard/60 focus-visible:border-hazard focus-visible:text-hazard focus-visible:ring-2 focus-visible:ring-hazard focus-visible:ring-offset-2 focus-visible:ring-offset-void"
         >
           GitHub
         </a>

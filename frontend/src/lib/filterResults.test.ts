@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { filterByVerdicts } from "./filterResults";
 import type { MirrorResult } from "../types";
+import { makeMirrorResult } from "../test-utils";
 
-const make = (verdict: MirrorResult["verdict"], resource: string): MirrorResult => ({
-  resource, verdict, dependents: [], risk_score: 0, node_type: "s3_bucket", node_name: resource,
-});
+const make = (verdict: MirrorResult["verdict"], resource: string): MirrorResult =>
+  makeMirrorResult({ resource, verdict, node_name: resource });
 
 describe("filterByVerdicts", () => {
   it("returns all results when no filters are selected", () => {
