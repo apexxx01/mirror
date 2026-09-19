@@ -5,6 +5,7 @@ import { countByVerdict } from "./lib/statCounts";
 import { Nav } from "./components/Nav";
 import { Hero } from "./components/Hero";
 import { FeatureLegend } from "./components/FeatureLegend";
+import { AccountSignals } from "./components/AccountSignals";
 import { VerdictTable } from "./components/VerdictTable";
 import { BedrockBanner } from "./components/BedrockBanner";
 import { KillSwitchBanner } from "./components/KillSwitchBanner";
@@ -43,6 +44,7 @@ export default function App() {
       <Nav hasFullStory={hasFullStory} />
       <Hero counts={counts} total={results.length} />
       <FeatureLegend />
+      <AccountSignals results={results} />
       <KillSwitchBanner results={results} />
       {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
       <VerdictTable results={results} />

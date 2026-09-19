@@ -165,13 +165,23 @@ export function MirrorChat({ payload }: MirrorChatProps) {
         )}
       </AnimatePresence>
 
+      {/*
+        Deliberately a small icon-first FAB, not a labeled hero button — the
+        real scan data is the page's subject, this is a secondary utility
+        layered on top of it, not a competing centerpiece. Expands to show
+        its label only on hover/focus.
+      */}
       <motion.button
+        data-testid="chat-toggle"
         onClick={() => setOpen((o) => !o)}
-        whileTap={{ scale: 0.94 }}
-        className="mirror-glass flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-widest text-white/90 outline-none transition-colors hover:text-hazard focus-visible:text-hazard"
+        whileTap={{ scale: 0.9 }}
+        className="group mirror-glass flex h-11 items-center gap-2 overflow-hidden px-3 text-[10px] font-bold uppercase tracking-widest text-white/70 outline-none transition-colors hover:text-hazard focus-visible:text-hazard"
       >
-        <span className={`h-2 w-2 rounded-full ${configured ? "bg-safe" : "bg-white/30"}`} />
-        {open ? "Close" : "Ask Mirror"}
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${configured ? "bg-safe" : "bg-white/30"}`} />
+        <span className="text-sm leading-none">{open ? "✕" : "✦"}</span>
+        <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+          {open ? "close" : "ask mirror"}
+        </span>
       </motion.button>
     </div>
   );
