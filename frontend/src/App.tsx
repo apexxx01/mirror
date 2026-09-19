@@ -26,13 +26,14 @@ export default function App() {
   if (status === "error") return <ErrorState message={error ?? "unknown error"} />;
 
   const results = data?.results ?? [];
+  const hasFullStory = Boolean(data?.bedrock_summary);
 
   return (
     <div className="relative min-h-screen">
       <Suspense fallback={<div className="fixed inset-0 -z-10 bg-void" />}>
         <GraphBackground results={results} />
       </Suspense>
-      <Nav />
+      <Nav hasFullStory={hasFullStory} />
       <Hero />
       {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
       <VerdictTable results={results} />
