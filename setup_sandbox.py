@@ -154,6 +154,12 @@ def ensure_function(name, role_arn, env_vars=None):
         log(f"function {name} already exists, updating code/env")
         lambda_client.update_function_code(FunctionName=name, ZipFile=zip_bytes)
         if env_vars is not None:
+            # update_function_code() is processed asynchronously; a
+            # config-changing call issued right after it fails with
+            # ResourceConflictException ("update in progress") unless we
+            # wait for the code update to actually finish first — same
+            # waiter pattern already used for DynamoDB tables above.
+            lambda_client.get_waiter("function_updated").wait(FunctionName=name)
             lambda_client.update_function_configuration(
                 FunctionName=name, Environment={"Variables": env_vars}
             )
