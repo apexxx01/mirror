@@ -8,6 +8,7 @@ import { FeatureLegend } from "./components/FeatureLegend";
 import { VerdictTable } from "./components/VerdictTable";
 import { BedrockBanner } from "./components/BedrockBanner";
 import { KillSwitchBanner } from "./components/KillSwitchBanner";
+import { MirrorChat } from "./components/MirrorChat";
 import { Footer } from "./components/Footer";
 import { LoadingState } from "./components/LoadingState";
 import { ErrorState } from "./components/ErrorState";
@@ -46,6 +47,7 @@ export default function App() {
       {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
       <VerdictTable results={results} />
       <Footer />
+      {data && <MirrorChat payload={data} />}
     </div>
   );
 }
