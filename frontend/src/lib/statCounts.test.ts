@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { countByVerdict } from "./statCounts";
 import type { MirrorResult } from "../types";
+import { makeMirrorResult } from "../test-utils";
 
-const make = (verdict: MirrorResult["verdict"]): MirrorResult => ({
-  resource: "x", verdict, dependents: [], risk_score: 0, node_type: "s3_bucket", node_name: "x",
-});
+const make = (verdict: MirrorResult["verdict"]): MirrorResult => makeMirrorResult({ resource: "x", verdict, node_name: "x" });
 
 describe("countByVerdict", () => {
   it("counts each verdict correctly, including zero counts", () => {

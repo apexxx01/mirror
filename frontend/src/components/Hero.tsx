@@ -1,4 +1,11 @@
 import { useEffect, useState } from "react";
+import { Glow } from "./Glow";
+import type { Verdict } from "../types";
+
+interface HeroProps {
+  counts: Record<Verdict, number>;
+  total: number;
+}
 
 /**
  * The headline is Mirror's thesis, and the reveal performs it rather than
@@ -95,7 +102,7 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function Hero() {
+export function Hero({ counts, total }: HeroProps) {
   // Read once at mount. Everything below is then derived during render, so a
   // reduced-motion visitor never sees an empty frame before the full headline.
   const [reduced] = useState(prefersReducedMotion);
@@ -159,6 +166,37 @@ export function Hero() {
       className="relative z-10 flex min-h-screen scroll-mt-32 flex-col justify-center px-6 pb-20 pt-24 sm:scroll-mt-24 md:px-12 md:pt-32"
     >
       <style>{HERO_CSS}</style>
+
+      <Glow
+        colorFrom="rgba(59,130,246,0.55)"
+        colorTo="rgba(249,115,22,0.05)"
+        className="left-[-10%] top-[8%] h-[520px] w-[520px] md:h-[680px] md:w-[680px]"
+      />
+
+      {/* Real stat callout — same live counts StatTiles/KillSwitchBanner
+          use, never a decorative placeholder number. The BLOCKED count gets
+          the dashed/glitch-stripe text treatment (reference 1's "unseen")
+          since it's the one number on the page worth making you look twice
+          at. */}
+      <div className="mirror-glass absolute right-6 top-24 z-20 hidden w-56 px-5 py-4 sm:block md:right-12">
+        <div className="font-mono text-[10px] uppercase tracking-widest text-white/50">
+          resources scanned
+        </div>
+        <div className="mt-1 font-mono text-2xl font-bold text-ink">{total}</div>
+        <div className="mt-3 font-mono text-[10px] uppercase tracking-widest text-white/50">
+          blocked
+        </div>
+        <div className="mirror-glitch-text mt-1 font-mono text-2xl font-bold">
+          {counts.BLOCKED}
+        </div>
+        <div
+          className={`mt-3 inline-block rounded-full px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-widest ${
+            counts.BLOCKED > 0 ? "bg-blocked text-void" : "bg-safe text-void"
+          }`}
+        >
+          {counts.BLOCKED > 0 ? "Blocked resources detected" : "All clear"}
+        </div>
+      </div>
 
       {/*
         The real heading for assistive technology, stated once and in full.

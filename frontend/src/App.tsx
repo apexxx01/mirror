@@ -1,10 +1,13 @@
 import { lazy, Suspense } from "react";
 import { MIRROR_DATA_URL } from "./config";
 import { useMirrorData } from "./hooks/useMirrorData";
+import { countByVerdict } from "./lib/statCounts";
 import { Nav } from "./components/Nav";
 import { Hero } from "./components/Hero";
 import { VerdictTable } from "./components/VerdictTable";
 import { BedrockBanner } from "./components/BedrockBanner";
+import { KillSwitchBanner } from "./components/KillSwitchBanner";
+import { Footer } from "./components/Footer";
 import { LoadingState } from "./components/LoadingState";
 import { ErrorState } from "./components/ErrorState";
 import { PlaceholderState } from "./components/PlaceholderState";
@@ -26,17 +29,21 @@ export default function App() {
   if (status === "error") return <ErrorState message={error ?? "unknown error"} />;
 
   const results = data?.results ?? [];
+  const counts = countByVerdict(results);
   const hasFullStory = Boolean(data?.bedrock_summary);
 
   return (
     <div className="relative min-h-screen">
+      <div className="mirror-grid" />
       <Suspense fallback={<div className="fixed inset-0 -z-10 bg-void" />}>
         <GraphBackground results={results} />
       </Suspense>
       <Nav hasFullStory={hasFullStory} />
-      <Hero />
+      <Hero counts={counts} total={results.length} />
+      <KillSwitchBanner results={results} />
       {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
       <VerdictTable results={results} />
+      <Footer />
     </div>
   );
 }
