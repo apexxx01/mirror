@@ -79,6 +79,33 @@ def evaluate_all(graph, policies, action="delete"):
         # computable one resource at a time via those CLI flags.
         verdict["future_diff"] = future_diff(graph, node_id, action)
         verdict["rollback_plan"] = rollback_plan_for(node["type"], node["name"])
+        # Real transitive dependent chain + real Lambda traffic (same
+        # blast_radius.py --blast-radius already uses) and real historical
+        # CloudWatch error/throttle evidence across that chain (same
+        # adversarial.py --adversarial already uses) — attached to every
+        # result instead of only computable one resource at a time.
+        verdict["blast_radius"] = blast_radius(graph, node_id)
+        verdict["adversarial"] = adversarial_check(graph, node_id)
+        # The same four named hypothetical-evidence scenarios --rewind
+        # prints, precomputed here: the real Cedar pipeline run four times
+        # per resource, swapping only fields already observed. No new data
+        # source, no fabrication — just done once at publish time instead
+        # of only interactively via --rewind.
+        scenarios = [
+            ("as observed", len(deps), risk),
+            ("if zero dependents", 0, risk),
+            ("if risk score < 50", len(deps), 0),
+            ("if both were true", 0, 0),
+        ]
+        verdict["decision_matrix"] = [
+            {
+                "scenario": name,
+                "dependents_count": dep_count,
+                "risk_score": risk_val,
+                "verdict": decide(action, node_id, dep_count, risk_val, policies)["verdict"],
+            }
+            for name, dep_count, risk_val in scenarios
+        ]
         results.append(verdict)
     return results
 
