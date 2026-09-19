@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  border-radius: 0 !important;
+}
+
+html, body, #root {
+  color: #F5F5F5;
+  height: 100%;
+}
+
+html {
+  /* Dark-mode-only page: without this, the browser renders light-scheme UA
+     chrome — scrollbars and the default focus ring — over a #0A0A0A page. */
+  color-scheme: dark;
+  background-color: #0A0A0A;
+}
+
+/*
+  body and #root are deliberately transparent rather than re-painted with the
+  void color: GraphBackground (src/components/GraphBackground.tsx) renders a
+  fixed, -z-10 layer behind the whole app. Per CSS painting order, a
+  negative-z descendant is painted BEFORE the in-flow backgrounds of its
+  ancestors, so an opaque fill on body/#root would bury that layer regardless
+  of z-index. html keeps the real #0A0A0A fill and is what actually shows
+  through everywhere the graph doesn't touch (or when it isn't mounted, e.g.
+  no WebGL), so the page still reads as void top to bottom either way.
+*/
+body, #root {
+  background-color: transparent;
+}
