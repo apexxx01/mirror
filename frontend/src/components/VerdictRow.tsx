@@ -1,15 +1,21 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import type { MirrorResult, ReversibilityLevel, MirrorBadge } from "../types";
+import type { MirrorResult, ReversibilityLevel, MirrorBadge, Verdict } from "../types";
 
 interface VerdictRowProps {
   result: MirrorResult;
 }
 
-const BADGE: Record<MirrorResult["verdict"], string> = {
+const BADGE: Record<Verdict, string> = {
   BLOCKED: "bg-blocked text-void",
   NEEDS_REVIEW: "bg-review text-void",
   SAFE: "bg-safe text-void",
+};
+
+const VERDICT_TEXT: Record<Verdict, string> = {
+  BLOCKED: "text-blocked",
+  NEEDS_REVIEW: "text-review",
+  SAFE: "text-safe",
 };
 
 const REVERSIBILITY_PILL: Record<ReversibilityLevel, string> = {
@@ -32,9 +38,30 @@ function Pill({ className, children }: { className: string; children: React.Reac
   );
 }
 
+function SectionHeader({ n, title }: { n: number; title: string }) {
+  return (
+    <div className="mb-2 flex items-baseline gap-2">
+      <span className="text-hazard">{String(n).padStart(2, "0")}</span>
+      <span className="uppercase tracking-widest text-white/40">{title}</span>
+    </div>
+  );
+}
+
 export function VerdictRow({ result }: VerdictRowProps) {
   const [open, setOpen] = useState(false);
-  const { reversibility, mirror_score: mirrorScore, future_diff: futureDiff, rollback_plan: rollbackPlan } = result;
+  const {
+    reversibility,
+    mirror_score: mirrorScore,
+    future_diff: futureDiff,
+    rollback_plan: rollbackPlan,
+    blast_radius: blastRadius = [],
+    adversarial = [],
+    decision_matrix: decisionMatrix = [],
+  } = result;
+
+  const totalErrors = adversarial.reduce((n, e) => n + (e.errors ?? 0), 0);
+  const totalThrottles = adversarial.reduce((n, e) => n + (e.throttles ?? 0), 0);
+  const hasInstability = totalErrors > 0 || totalThrottles > 0;
 
   return (
     <div className="border-b border-white/10 last:border-b-0">
@@ -64,68 +91,154 @@ export function VerdictRow({ result }: VerdictRowProps) {
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             className="overflow-hidden"
           >
-            <div className="mirror-glass mx-4 mb-4 space-y-5 px-5 py-5 font-mono text-xs text-white/70">
-              <div>
-                <div className="mb-2 uppercase tracking-widest text-white/40">Real dependents</div>
-                {result.dependents.length === 0 ? (
-                  <div>no real dependents found</div>
-                ) : (
-                  <ul className="space-y-1">
-                    {result.dependents.map((dep) => (
-                      <li key={dep}>{dep}</li>
-                    ))}
-                  </ul>
-                )}
+            <div className="mirror-glass mx-4 mb-4 px-5 py-5 font-mono text-xs text-white/70">
+              <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                  Full Story — all 7 real signals
+                </div>
+                <div className={`text-[10px] font-bold uppercase tracking-widest ${VERDICT_TEXT[result.verdict]}`}>
+                  {result.verdict.replace("_", " ")}
+                </div>
               </div>
 
-              <div>
-                <div className="mb-2 uppercase tracking-widest text-white/40">
-                  Reversibility — {reversibility.level}
-                </div>
-                <div className="text-white/70">{reversibility.reason}</div>
-              </div>
-
-              <div>
-                <div className="mb-2 uppercase tracking-widest text-white/40">
-                  Future diff (before / after)
-                </div>
-                <div className="space-y-1">
-                  <div>
-                    <span className="text-white/40">this resource: </span>
-                    exists <span className="text-white/40">&rarr;</span> {futureDiff.self.after.note}
+              <div className="space-y-6">
+                {/* 1. Verdict & Cedar output — the kill-switch / shadow-execution proof */}
+                <div>
+                  <SectionHeader n={1} title="Verdict & real Cedar policy output" />
+                  <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                    <div>decision: {result.cedar_decision}</div>
+                    <div>reasons: [{result.cedar_reasons.join(", ") || "none"}]</div>
                   </div>
-                  {futureDiff.downstream.length === 0 ? (
-                    <div className="text-white/50">no downstream effects — nothing else depends on this</div>
+                  <div className="mt-2">
+                    <span className="text-white/40">real dependents: </span>
+                    {result.dependents.length === 0 ? (
+                      <span>no real dependents found</span>
+                    ) : (
+                      <span>{result.dependents.join(", ")}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Blast radius — transitive chain + real traffic */}
+                <div>
+                  <SectionHeader n={2} title="Blast radius (real transitive chain)" />
+                  {blastRadius.length === 0 ? (
+                    <div className="text-white/50">no transitive dependents — nothing downstream is affected</div>
                   ) : (
-                    futureDiff.downstream.map((effect) => (
-                      <div key={effect.dependent} className="border-l-2 border-white/10 pl-3">
-                        <div className="text-white/50">{effect.dependent} (via {effect.via})</div>
-                        <div>before: {effect.before}</div>
-                        <div>after: {effect.after}</div>
-                      </div>
-                    ))
+                    <ul className="space-y-1">
+                      {blastRadius.map((entry) => (
+                        <li key={entry.resource} className="flex items-baseline gap-2">
+                          <span className="text-white/40">hop {entry.hop}</span>
+                          <span className="min-w-0 truncate">{entry.resource}</span>
+                          {typeof entry.invocations_90d === "number" && (
+                            <span className="text-white/40">
+                              — {entry.invocations_90d} real invocations (90d)
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
-              </div>
 
-              <div>
-                <div className="mb-2 uppercase tracking-widest text-white/40">Rollback plan</div>
-                {rollbackPlan.available ? (
-                  <ul className="space-y-1">
-                    {rollbackPlan.steps.map((step, i) => (
-                      <li key={i}>{step}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div>no rollback path — {rollbackPlan.reason}</div>
-                )}
-              </div>
+                {/* 3. Adversarial evidence — real historical errors/throttles */}
+                <div>
+                  <SectionHeader n={3} title="Adversarial check (real historical evidence)" />
+                  {adversarial.length === 0 ? (
+                    <div className="text-white/50">no Lambda functions in this chain — no reliability signal to check</div>
+                  ) : (
+                    <>
+                      <ul className="space-y-1">
+                        {adversarial.map((entry) => (
+                          <li key={entry.resource}>
+                            <span className="min-w-0 truncate">{entry.resource}</span>
+                            <span className="text-white/40">
+                              {" "}
+                              — errors: {entry.errors ?? "unknown"}, throttles: {entry.throttles ?? "unknown"} (90d)
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className={`mt-1 ${hasInstability ? "text-blocked" : "text-white/50"}`}>
+                        {hasInstability
+                          ? `real historical instability: ${totalErrors} error(s), ${totalThrottles} throttle(s)`
+                          : "no historical error evidence found — a real negative result, not a claim it \"passed\""}
+                      </div>
+                    </>
+                  )}
+                </div>
 
-              <div>
-                <div className="mb-2 uppercase tracking-widest text-white/40">Cedar policy output</div>
-                <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
-                  <div>decision: {result.cedar_decision}</div>
-                  <div>reasons: [{result.cedar_reasons.join(", ") || "none"}]</div>
+                {/* 4. Decision matrix — real counterfactuals */}
+                <div>
+                  <SectionHeader n={4} title="Decision matrix (real counterfactuals)" />
+                  <div className="overflow-x-auto rounded-lg border border-white/10">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-white/10 text-white/40">
+                          <th className="px-3 py-1.5 font-normal">scenario</th>
+                          <th className="px-3 py-1.5 font-normal">deps</th>
+                          <th className="px-3 py-1.5 font-normal">risk</th>
+                          <th className="px-3 py-1.5 font-normal">verdict</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {decisionMatrix.map((row) => (
+                          <tr key={row.scenario} className="border-b border-white/5 last:border-b-0">
+                            <td className="px-3 py-1.5 text-white/70">{row.scenario}</td>
+                            <td className="px-3 py-1.5">{row.dependents_count}</td>
+                            <td className="px-3 py-1.5">{row.risk_score}</td>
+                            <td className={`px-3 py-1.5 font-bold ${VERDICT_TEXT[row.verdict]}`}>
+                              {row.verdict.replace("_", " ")}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 5. Reversibility */}
+                <div>
+                  <SectionHeader n={5} title={`Reversibility — ${reversibility.level}`} />
+                  <div className="text-white/70">{reversibility.reason}</div>
+                </div>
+
+                {/* 6. Rollback plan */}
+                <div>
+                  <SectionHeader n={6} title="Rollback plan (real recovery facts)" />
+                  {rollbackPlan.available ? (
+                    <ul className="space-y-1">
+                      {rollbackPlan.steps.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div>no rollback path — {rollbackPlan.reason}</div>
+                  )}
+                </div>
+
+                {/* 7. Future diff */}
+                <div>
+                  <SectionHeader n={7} title="Future diff (real before / after)" />
+                  <div className="space-y-1">
+                    <div>
+                      <span className="text-white/40">this resource: </span>
+                      exists <span className="text-white/40">&rarr;</span> {futureDiff.self.after.note}
+                    </div>
+                    {futureDiff.downstream.length === 0 ? (
+                      <div className="text-white/50">no downstream effects — nothing else depends on this</div>
+                    ) : (
+                      futureDiff.downstream.map((effect) => (
+                        <div key={effect.dependent} className="border-l-2 border-white/10 pl-3">
+                          <div className="text-white/50">
+                            {effect.dependent} (via {effect.via})
+                          </div>
+                          <div>before: {effect.before}</div>
+                          <div>after: {effect.after}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

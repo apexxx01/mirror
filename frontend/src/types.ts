@@ -41,6 +41,26 @@ export interface RollbackPlan {
   reason: string | null;
 }
 
+export interface BlastRadiusEntry {
+  resource: string;
+  hop: number;
+  invocations_90d?: number | null;
+}
+
+export interface AdversarialEntry {
+  resource: string;
+  hop: number;
+  errors: number | null;
+  throttles: number | null;
+}
+
+export interface DecisionMatrixRow {
+  scenario: string;
+  dependents_count: number;
+  risk_score: number;
+  verdict: Verdict;
+}
+
 export interface MirrorResult {
   resource: string;
   verdict: Verdict;
@@ -54,6 +74,9 @@ export interface MirrorResult {
   rollback_plan: RollbackPlan;
   cedar_decision: string;
   cedar_reasons: string[];
+  blast_radius: BlastRadiusEntry[];
+  adversarial: AdversarialEntry[];
+  decision_matrix: DecisionMatrixRow[];
 }
 
 export interface MirrorPayload {

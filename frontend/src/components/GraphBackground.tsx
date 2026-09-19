@@ -436,6 +436,23 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     <group ref={groupRef} position={[place.centerX, place.centerY, 0]}>
       {/* The risk core — real aggregate state, given real visual weight. */}
       <group>
+        {/* A fixed cool-blue ambient undertone, offset behind the real-state
+            glow — the same identity color as the hero's own glow, so the
+            core reads as a two-tone plasma object (Cortexa-style) rather
+            than a flat single-hue ball, without diluting what the dominant
+            color actually means. */}
+        <sprite scale={[coreRadius * 11, coreRadius * 11, 1]} position={[0.15, -0.1, -0.3]}>
+          <spriteMaterial
+            map={glowTex}
+            color="#3B82F6"
+            transparent
+            opacity={0.35}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
         <mesh scale={coreRadius}>
           <sphereGeometry args={[1, 32, 32]} />
           <meshBasicMaterial color={coreColor} toneMapped={false} />
