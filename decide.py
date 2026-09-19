@@ -116,6 +116,41 @@ def counterfactual(action, resource_id, base_evidence, policies, principal="agen
     return decide(action, resource_id, evidence["dependents_count"], evidence["risk_score"], policies, principal)
 
 
+def mirror_score(verdict, risk_score, reversibility_level):
+    """
+    Composite badge over verdict + risk_score + reversibility — pure
+    presentation layer, no new AWS calls, no invented numbers. Every input
+    is a real value already computed elsewhere: verdict is the actual
+    Cedar decision, risk_score is the same 0-100 activity-derived score
+    decide() already reports, reversibility_level is HIGH/MEDIUM/LOW from
+    reversibility.reversibility_of().
+
+    BLOCKED always forces score 0 / STOP — a real dependent overrides
+    everything else; low risk or high reversibility can't buy back a hard
+    Cedar forbid. Otherwise: score = 100 - risk_score, then +5 if
+    reversibility is HIGH, +0 if MEDIUM, -15 if LOW, clamped to [0, 100].
+
+    Bands: 0-19 STOP, 20-59 CAUTION, 60-100 CLEAR.
+    """
+    if verdict == "BLOCKED":
+        score = 0
+    else:
+        score = 100 - risk_score
+        if reversibility_level == "HIGH":
+            score += 5
+        elif reversibility_level == "LOW":
+            score -= 15
+        score = max(0, min(100, score))
+
+    if score < 20:
+        badge = "STOP"
+    elif score < 60:
+        badge = "CAUTION"
+    else:
+        badge = "CLEAR"
+    return {"score": score, "badge": badge}
+
+
 if __name__ == "__main__":
     # Smoke test with the exact three cases verified live against the real
     # policy file — run this after editing mirror.cedar to confirm the
@@ -144,5 +179,26 @@ if __name__ == "__main__":
     print("counterfactual (dependents_count forced to 0):")
     print(json.dumps(rewind, indent=2))
     assert rewind["verdict"] == "SAFE"
+
+    # mirror_score: BLOCKED always forces 0/STOP regardless of reversibility.
+    blocked_score = mirror_score("BLOCKED", risk_score=10, reversibility_level="HIGH")
+    assert blocked_score == {"score": 0, "badge": "STOP"}
+
+    # SAFE with low risk and HIGH reversibility -> high score, CLEAR.
+    safe_score = mirror_score("SAFE", risk_score=10, reversibility_level="HIGH")
+    assert safe_score["score"] == 95
+    assert safe_score["badge"] == "CLEAR"
+
+    # NEEDS_REVIEW with high risk and LOW reversibility -> low score, STOP.
+    review_score = mirror_score("NEEDS_REVIEW", risk_score=80, reversibility_level="LOW")
+    assert review_score["score"] == 5
+    assert review_score["badge"] == "STOP"
+
+    # MEDIUM reversibility is a no-op on the score.
+    medium_score = mirror_score("SAFE", risk_score=10, reversibility_level="MEDIUM")
+    assert medium_score["score"] == 90
+    assert medium_score["badge"] == "CLEAR"
+
+    print(json.dumps({"blocked": blocked_score, "safe": safe_score, "review": review_score, "medium": medium_score}, indent=2))
 
     print("\nAll smoke tests passed.")
