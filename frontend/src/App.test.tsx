@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App";
 import * as configModule from "./config";
+import { makeMirrorResult } from "./test-utils";
 
 describe("App", () => {
   beforeEach(() => {
@@ -46,8 +47,8 @@ describe("App", () => {
         generated_at: "2026-01-01T00:00:00Z",
         bedrock_summary: null,
         results: [
-          { resource: "safe:one", verdict: "SAFE", dependents: [], risk_score: 10, node_type: "s3_bucket", node_name: "one" },
-          { resource: "blocked:one", verdict: "BLOCKED", dependents: [], risk_score: 10, node_type: "s3_bucket", node_name: "one" },
+          makeMirrorResult({ resource: "safe:one", verdict: "SAFE", node_name: "one" }),
+          makeMirrorResult({ resource: "blocked:one", verdict: "BLOCKED", node_name: "one" }),
         ],
       }),
     });

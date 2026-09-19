@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildLayout, fibonacciPoint, hashUnit } from "./GraphBackground";
 import type { MirrorResult } from "../types";
+import { makeMirrorResult } from "../test-utils";
 import * as THREE from "three";
 
 /**
@@ -18,14 +19,7 @@ const make = (
   dependents: string[] = [],
   verdict: MirrorResult["verdict"] = "SAFE",
   risk_score = 0,
-): MirrorResult => ({
-  resource,
-  verdict,
-  dependents,
-  risk_score,
-  node_type: "s3_bucket",
-  node_name: resource,
-});
+): MirrorResult => makeMirrorResult({ resource, verdict, dependents, risk_score, node_name: resource });
 
 /** The real sandbox shape: 8 resources, 3 genuine dependency edges. */
 const SANDBOX: MirrorResult[] = [
