@@ -21,7 +21,7 @@ describe("MirrorChat", () => {
     // dev environment's own .env.local (real key) shouldn't leak in.
     vi.stubEnv("VITE_GEMINI_API_KEY", "");
     render(<MirrorChat payload={payload} />);
-    fireEvent.click(screen.getByText("Ask Mirror"));
+    fireEvent.click(screen.getByTestId("chat-toggle"));
     expect(screen.getByText(/Gemini API key not configured/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText("chat disabled")).toBeDisabled();
   });
@@ -29,7 +29,7 @@ describe("MirrorChat", () => {
   it("toggles open and closed", () => {
     render(<MirrorChat payload={payload} />);
     expect(screen.queryByText(/grounded in this page's real scan/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Ask Mirror"));
+    fireEvent.click(screen.getByTestId("chat-toggle"));
     expect(screen.getByText(/grounded in this page's real scan/)).toBeInTheDocument();
   });
 });

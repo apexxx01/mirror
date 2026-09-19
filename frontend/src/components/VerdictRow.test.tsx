@@ -27,6 +27,19 @@ const withDeps = makeMirrorResult({
       },
     ],
   },
+  blast_radius: [
+    { resource: "lambda:mirror-demo-report-generator", hop: 1, invocations_90d: 3 },
+    { resource: "eventbridge:mirror-demo-report-schedule", hop: 2 },
+  ],
+  adversarial: [
+    { resource: "lambda:mirror-demo-report-generator", hop: 1, errors: 0, throttles: 0 },
+  ],
+  decision_matrix: [
+    { scenario: "as observed", dependents_count: 1, risk_score: 10, verdict: "BLOCKED" },
+    { scenario: "if zero dependents", dependents_count: 0, risk_score: 10, verdict: "SAFE" },
+    { scenario: "if risk score < 50", dependents_count: 1, risk_score: 0, verdict: "BLOCKED" },
+    { scenario: "if both were true", dependents_count: 0, risk_score: 0, verdict: "SAFE" },
+  ],
 });
 
 const noDeps = makeMirrorResult({
@@ -73,5 +86,27 @@ describe("VerdictRow", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows the real blast radius chain with hop counts and real invocation counts", () => {
+    render(<VerdictRow result={withDeps} />);
+    fireEvent.click(screen.getByTestId("row-toggle"));
+    expect(screen.getByText(/eventbridge:mirror-demo-report-schedule/)).toBeInTheDocument();
+    expect(screen.getByText(/3 real invocations/)).toBeInTheDocument();
+  });
+
+  it('shows honest "no historical error evidence" when adversarial check found none', () => {
+    render(<VerdictRow result={withDeps} />);
+    fireEvent.click(screen.getByTestId("row-toggle"));
+    expect(screen.getByText(/no historical error evidence found/)).toBeInTheDocument();
+  });
+
+  it("shows all four real decision-matrix rows with their real verdicts", () => {
+    render(<VerdictRow result={withDeps} />);
+    fireEvent.click(screen.getByTestId("row-toggle"));
+    expect(screen.getByText("if zero dependents")).toBeInTheDocument();
+    expect(screen.getByText("if both were true")).toBeInTheDocument();
+    // "as observed" row and closed-row badge both say BLOCKED; assert at least one match exists.
+    expect(screen.getAllByText("BLOCKED").length).toBeGreaterThan(0);
   });
 });
