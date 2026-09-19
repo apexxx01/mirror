@@ -2,13 +2,89 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  border-radius: 0 !important;
+html, body, #root {
+  color: #f2f2ee;
+  height: 100%;
 }
 
-html, body, #root {
-  color: #F5F5F5;
-  height: 100%;
+/* The large CSS glow blobs (Hero, VerdictTable, KillSwitchBanner) are
+   deliberately oversized and deliberately bleed past their section's edges
+   for a soft, ambient look — clipped here at the document root rather than
+   individually, so narrow viewports never gain horizontal scroll from a
+   blob that's still visually correct bleeding off-screen. */
+html, body {
+  overflow-x: hidden;
+}
+
+/*
+  Dark cinematic / glass direction: a faint fixed grid sits behind everything
+  (echoing the Cortexa reference), independent of GraphBackground's own
+  -z-10 layer. -z-20 keeps it strictly behind the graph, which is itself
+  behind body/#root's transparency (see the comment below).
+*/
+.mirror-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -20;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  pointer-events: none;
+}
+
+/*
+  Glass surface: translucent dark fill + blur + a hairline border. Used on
+  every card-like element (stat tiles, kill-switch banner, expanded row
+  detail, Bedrock summary). Rounded moderately — this direction commits to
+  soft glass, not the brutalist zero-radius rule from an earlier pass.
+*/
+.mirror-glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+}
+
+/* Large soft blurred gradient blob — the "3D-feeling" hero/section glow,
+   built from CSS alone (radial-gradient + blur), never a raster asset. */
+.mirror-glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  will-change: opacity, transform;
+  animation: mirror-glow-pulse 11s ease-in-out infinite;
+}
+
+@keyframes mirror-glow-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.08); }
+}
+
+/* Dashed/glitch stripe text treatment (reference 1's "unseen") — a
+   repeating gradient clipped to the text, alternating solid/transparent
+   bands instead of a flat fill. Uses a fixed color rather than currentColor:
+   background-clip:text requires the element's own `color` to be transparent
+   to reveal the background, and currentColor would resolve to that same
+   transparent value, making the whole thing invisible. */
+.mirror-glitch-text {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    #ff1e1e 0px,
+    #ff1e1e 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mirror-glow { animation: none; }
 }
 
 html {

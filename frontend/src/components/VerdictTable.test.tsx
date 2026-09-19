@@ -2,16 +2,16 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { VerdictTable } from "./VerdictTable";
 import type { MirrorResult } from "../types";
+import { makeMirrorResult } from "../test-utils";
 
 const results: MirrorResult[] = [
-  {
+  makeMirrorResult({
     resource: "bucket-1",
     verdict: "BLOCKED",
     dependents: ["lambda-a"],
     risk_score: 9,
-    node_type: "s3_bucket",
     node_name: "bucket-1",
-  },
+  }),
 ];
 
 describe("VerdictTable", () => {

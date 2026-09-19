@@ -5,7 +5,7 @@ import { Hero } from "./Hero";
 describe("Hero", () => {
   it("types out the full headline text over time", () => {
     vi.useFakeTimers();
-    render(<Hero />);
+    render(<Hero counts={{ BLOCKED: 3, NEEDS_REVIEW: 1, SAFE: 4 }} total={8} />);
 
     act(() => {
       vi.advanceTimersByTime(5000);
@@ -18,7 +18,7 @@ describe("Hero", () => {
 
   it("reveals the headline progressively rather than all at once", () => {
     vi.useFakeTimers();
-    render(<Hero />);
+    render(<Hero counts={{ BLOCKED: 3, NEEDS_REVIEW: 1, SAFE: 4 }} total={8} />);
 
     expect(screen.getByTestId("hero-headline").textContent).toBe("");
 
@@ -34,7 +34,7 @@ describe("Hero", () => {
 
   it("exposes the complete headline to assistive technology immediately", () => {
     vi.useFakeTimers();
-    render(<Hero />);
+    render(<Hero counts={{ BLOCKED: 3, NEEDS_REVIEW: 1, SAFE: 4 }} total={8} />);
 
     expect(
       screen.getByRole("heading", { level: 1 }).textContent,
