@@ -44,7 +44,7 @@ import sys
 import boto3
 from botocore.exceptions import ClientError
 
-from decide import decide, load_policies
+from decide import decide, load_policies, mirror_score
 from graph_builder import build_graph, dependents_of
 from reversibility import reversibility_of
 from rollback import rollback_plan_for
@@ -71,6 +71,7 @@ def evaluate_all(graph, policies, action="delete"):
         verdict["node_type"] = node["type"]
         verdict["node_name"] = node["name"]
         verdict["reversibility"] = reversibility_of(node["type"], node["name"])
+        verdict["mirror_score"] = mirror_score(verdict["verdict"], risk, verdict["reversibility"]["level"])
         results.append(verdict)
     return results
 
@@ -79,10 +80,12 @@ def print_report(results):
     order = {"BLOCKED": 0, "NEEDS_REVIEW": 1, "SAFE": 2}
     results = sorted(results, key=lambda r: order.get(r["verdict"], 3))
 
-    print(f"{'VERDICT':<14} {'RESOURCE':<45} {'DEPS':<5} {'RISK':<5} {'REVERSIBLE':<10}")
-    print("-" * 87)
+    print(f"{'VERDICT':<14} {'RESOURCE':<45} {'DEPS':<5} {'RISK':<5} {'REVERSIBLE':<10} {'MIRROR SCORE':<14}")
+    print("-" * 101)
     for r in results:
-        print(f"{r['verdict']:<14} {r['resource']:<45} {len(r['dependents']):<5} {r['risk_score']:<5} {r['reversibility']['level']:<10}")
+        score = r["mirror_score"]
+        score_str = f"{score['score']} {score['badge']}"
+        print(f"{r['verdict']:<14} {r['resource']:<45} {len(r['dependents']):<5} {r['risk_score']:<5} {r['reversibility']['level']:<10} {score_str:<14}")
 
     blocked = [r for r in results if r["verdict"] == "BLOCKED"]
     if blocked:
@@ -91,6 +94,11 @@ def print_report(results):
             print(f"  {r['resource']}")
             for dep in r["dependents"]:
                 print(f"    <- depended on by {dep}")
+
+    needs_review = [r for r in results if r["verdict"] == "NEEDS_REVIEW"]
+    print(f"\nKill switch: {len(needs_review)} resource(s) marked NEEDS_REVIEW — "
+          f"Mirror refuses to auto-approve when it isn't confident, rather than "
+          f"guessing safe.")
 
 
 def explain(graph, policies, resource_id, action="delete"):
@@ -103,6 +111,7 @@ def explain(graph, policies, resource_id, action="delete"):
     risk = risk_score_from_activity(node.get("days_since_activity"))
     verdict = decide(action, resource_id, len(deps), risk, policies)
     rev = reversibility_of(node["type"], node["name"])
+    score = mirror_score(verdict["verdict"], risk, rev["level"])
 
     print(f"WHY CAN'T I {action.upper()} {resource_id}?\n")
     print(f"  verdict:            {verdict['verdict']}")
@@ -112,6 +121,7 @@ def explain(graph, policies, resource_id, action="delete"):
     print(f"  days since activity: {node.get('days_since_activity')}")
     print(f"  risk score:          {risk}/100")
     print(f"  reversibility:       {rev['level']} — {rev['reason']}")
+    print(f"  mirror score:        {score['score']}/100 — {score['badge']}")
     print(f"  cedar decision:      {verdict['cedar_decision']}")
     print(f"  cedar reasons:       {verdict['cedar_reasons']}")
     print(f"  rollback plan:       run `python mirror.py --rollback {resource_id}` for real recovery facts")
@@ -453,7 +463,19 @@ def main():
             print(bedrock_summary)
 
         if args.publish_s3:
-            url = publish_to_s3(results, args.publish_s3, bedrock_summary=bedrock_summary)
+            # Never publish an internal error string as if it were real AI
+            # content — the frontend renders bedrock_summary as a legitimate
+            # summary callout whenever it's truthy, so publishing
+            # generate_report_safe()'s failure-fallback string would show
+            # visitors "[Bedrock report unavailable: ...]" as if it were
+            # Mirror's real analysis. Publish None on failure instead; the
+            # frontend already handles a null summary correctly by omitting
+            # the callout entirely. CLI output above is unaffected — the
+            # operator still sees the real error.
+            published_summary = bedrock_summary
+            if published_summary and published_summary.startswith("[Bedrock report unavailable:"):
+                published_summary = None
+            url = publish_to_s3(results, args.publish_s3, bedrock_summary=published_summary)
             print(f"\nPublished to: {url}")
 
 
