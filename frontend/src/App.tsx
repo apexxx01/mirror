@@ -38,6 +38,7 @@ export default function App() {
   return (
     <div className="relative min-h-screen">
       <div className="mirror-grid" />
+      <div className="mirror-halftone" />
       <Suspense fallback={<div className="fixed inset-0 -z-10 bg-void" />}>
         <GraphBackground results={results} />
       </Suspense>
