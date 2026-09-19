@@ -334,6 +334,21 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
 
   const pulseCount = Math.min(layout.edges.length, MAX_PULSES);
 
+  // The risk core: a single dominant visual object at the real center of the
+  // graph, colored by the account's real aggregate state — not decoration,
+  // the same three-state signal the kill-switch banner and stat tiles show,
+  // just given weight as the page's one hero object instead of buried in
+  // small type. Sized off the real resource count so a bigger scan reads as
+  // a bigger, denser core.
+  const coreColor = useMemo(() => {
+    if (layout.nodes.some((n) => n.verdict === "BLOCKED")) return VERDICT_COLOR.BLOCKED;
+    if (layout.nodes.some((n) => n.verdict === "NEEDS_REVIEW")) return VERDICT_COLOR.NEEDS_REVIEW;
+    return VERDICT_COLOR.SAFE;
+  }, [layout.nodes]);
+  const coreRadius = (0.55 + Math.min(layout.nodes.length, 20) * 0.02) * place.nodeScale;
+  const coreRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const coreGlowRef = useRef<THREE.Sprite>(null);
+
   // Under reduced motion the Canvas runs on demand rather than every frame
   // (see frameloop below), so nothing is repainted unless something actually
   // changed. Scrolling still moves the camera, so it has to ask for a frame.
@@ -398,10 +413,64 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       ring.lookAt(state.camera.position);
       if (!reduced) ring.rotateZ(t * 0.25);
     }
+
+    // Each concentric ring turns at its own rate on its own axis, so the core
+    // reads as a real nested-shell object rather than one flat spinning disc —
+    // the same "glossy concentric orb" shape the reference direction uses.
+    coreRingRefs.current.forEach((ring, i) => {
+      if (!ring) return;
+      if (reduced) return;
+      const speed = 0.12 + i * 0.05;
+      ring.rotation.x = t * speed * (i % 2 === 0 ? 1 : -1);
+      ring.rotation.y = t * speed * 0.7;
+    });
+    // Slow ambient pulse on the core's glow — same 8-14s cinematic band as
+    // every other glow on the page, never a fast blink.
+    if (coreGlowRef.current) {
+      const pulse = reduced ? 1 : 0.85 + Math.sin(t * (Math.PI * 2) / 10) * 0.15;
+      coreGlowRef.current.material.opacity = 0.6 * pulse;
+    }
   });
 
   return (
     <group ref={groupRef} position={[place.centerX, place.centerY, 0]}>
+      {/* The risk core — real aggregate state, given real visual weight. */}
+      <group>
+        <mesh scale={coreRadius}>
+          <sphereGeometry args={[1, 32, 32]} />
+          <meshBasicMaterial color={coreColor} toneMapped={false} />
+        </mesh>
+        {[1.55, 2.05, 2.6].map((mult, i) => (
+          <mesh
+            key={i}
+            ref={(m) => {
+              coreRingRefs.current[i] = m;
+            }}
+            scale={coreRadius * mult}
+          >
+            <torusGeometry args={[1, 0.035, 12, 64]} />
+            <meshBasicMaterial
+              color={coreColor}
+              transparent
+              opacity={0.35 - i * 0.08}
+              toneMapped={false}
+            />
+          </mesh>
+        ))}
+        <sprite ref={coreGlowRef} scale={[coreRadius * 9, coreRadius * 9, 1]}>
+          <spriteMaterial
+            map={glowTex}
+            color={coreColor}
+            transparent
+            opacity={0.6}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+      </group>
+
       {layout.nodes.map((nd, i) => {
         const color = VERDICT_COLOR[nd.verdict];
         // Radius is the real dependent count. The resources that would break
