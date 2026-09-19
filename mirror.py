@@ -72,6 +72,13 @@ def evaluate_all(graph, policies, action="delete"):
         verdict["node_name"] = node["name"]
         verdict["reversibility"] = reversibility_of(node["type"], node["name"])
         verdict["mirror_score"] = mirror_score(verdict["verdict"], risk, verdict["reversibility"]["level"])
+        # Real mechanical downstream breakdown (from actual graph edges) and
+        # real AWS recovery facts (versioning/PITR/published-version/rule
+        # definition) — the same functions --diff and --rollback already use
+        # live, now attached to every published result instead of only being
+        # computable one resource at a time via those CLI flags.
+        verdict["future_diff"] = future_diff(graph, node_id, action)
+        verdict["rollback_plan"] = rollback_plan_for(node["type"], node["name"])
         results.append(verdict)
     return results
 
