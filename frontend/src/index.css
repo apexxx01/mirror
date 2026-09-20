@@ -39,7 +39,6 @@
 
 html, body, #root {
   color: var(--ink);
-  height: 100%;
 }
 
 html, body {
