@@ -50,7 +50,7 @@ export default function App() {
         <GraphBackground results={results} />
       </Suspense>
 
-      <Nav hasFullStory={hasFullStory} />
+      <Nav hasFullStory={hasFullStory} payload={data ?? null} />
 
       {/*
         Composition order is the argument: the claim (Hero), the key that

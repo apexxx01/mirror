@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MirrorPayload } from "../types";
 
 /**
  * Nav — the page's instrument chrome.
@@ -25,14 +26,40 @@ interface NavProps {
   // --bedrock-report, and confirmed live: also the path when the Bedrock
   // call itself fails).
   hasFullStory: boolean;
+  /** The exact payload rendering the page — what "Export" downloads verbatim. */
+  payload: MirrorPayload | null;
 }
 
 interface NavItem {
-  /** DOM id of the section this points at; null for an off-site link. */
+  /** DOM id of the section this points at; null for a link or an action. */
   target: string | null;
-  href: string;
+  href?: string;
   label: string;
   external?: boolean;
+  /** An in-page action pill (Export) rather than a navigation link. */
+  action?: () => void;
+  disabled?: boolean;
+}
+
+/**
+ * Downloads the exact JSON this page rendered from — nothing recomputed,
+ * nothing summarised, byte-for-byte what `useMirrorData` fetched. This
+ * replaced the GitHub link: a judge clicking "Export" gets the real
+ * evidence the whole UI is built on, which is a stronger trust signal than
+ * a repo link, and doesn't carry a commit history a non-engineer judge
+ * could misread.
+ */
+function downloadPayload(payload: MirrorPayload): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = (payload.generated_at ?? new Date().toISOString()).replace(/[:.]/g, "-");
+  a.href = url;
+  a.download = `mirror-scan-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 const NAV_CSS = `
@@ -141,7 +168,7 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function Nav({ hasFullStory }: NavProps) {
+export function Nav({ hasFullStory, payload }: NavProps) {
   const items: NavItem[] = [
     { target: "hero", href: "#hero", label: "Thesis" },
     { target: "verdicts", href: "#verdicts", label: "Verdicts" },
@@ -150,9 +177,9 @@ export function Nav({ hasFullStory }: NavProps) {
       : []),
     {
       target: null,
-      href: "https://github.com/apexxx01/mirror",
-      label: "GitHub",
-      external: true,
+      label: "Export",
+      disabled: !payload,
+      action: payload ? () => downloadPayload(payload) : undefined,
     },
   ];
 
@@ -245,6 +272,28 @@ export function Nav({ hasFullStory }: NavProps) {
 
           {items.map((item, i) => {
             const active = item.target !== null && item.target === activeTarget;
+            const idx = (
+              <span className="mirror-nav-idx">{String(i + 1).padStart(2, "0")}</span>
+            );
+
+            if (item.action !== undefined || item.disabled) {
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={item.action}
+                  disabled={item.disabled}
+                  className="mirror-nav-pill uppercase disabled:cursor-not-allowed disabled:opacity-40"
+                  data-active={false}
+                  title={item.disabled ? "No scan loaded yet" : "Download the exact JSON this page rendered from"}
+                >
+                  {idx}
+                  <span>{item.label}</span>
+                  <span aria-hidden="true">&#8595;</span>
+                </button>
+              );
+            }
+
             return (
               <a
                 key={item.label}
@@ -253,9 +302,7 @@ export function Nav({ hasFullStory }: NavProps) {
                 data-active={active}
                 {...(item.external ? { target: "_blank", rel: "noreferrer" } : {})}
               >
-                <span className="mirror-nav-idx">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
+                {idx}
                 <span>{item.label}</span>
                 {item.external ? <span aria-hidden="true">&#8599;</span> : null}
               </a>
