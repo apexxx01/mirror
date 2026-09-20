@@ -179,26 +179,30 @@ export function AccountSignals({ results }: AccountSignalsProps) {
       aria-labelledby="signals-title"
       className="relative z-10 mx-auto mt-20 max-w-6xl px-6 sm:mt-28"
     >
-      <header className="border-t border-white/15 pt-5">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-[10px] tracking-[0.35em] text-smoke">02</span>
-              <span className="mirror-eyebrow text-base text-gold">the account</span>
-            </div>
-            <h2
-              id="signals-title"
-              className="mt-3 font-mono text-2xl font-bold uppercase leading-[1.05] tracking-crush text-ink sm:text-[2.5rem]"
-            >
-              Account-wide real signals
-            </h2>
-          </div>
-          <p className="max-w-sm font-mono text-xs leading-relaxed text-smoke">
-            Six aggregates, recomputed from the {total} scanned {total === 1 ? "resource" : "resources"} on
-            this page. Nothing cached, nothing rounded up, nothing invented.
-          </p>
+      {/*
+        Matched to the ledger's own plate (VerdictTable: "the ledger" / crushed
+        display headline with a stroked second line) — this section used a
+        smaller mono headline with no stroke treatment and read as a visibly
+        different, lesser UI register than the rest of the page.
+      */}
+      <header className="mirror-hairline flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 pt-5">
+        <div className="mirror-eyebrow text-sm text-gold">02 / the account</div>
+        <div className="max-w-sm font-mono text-[10px] uppercase leading-relaxed tracking-[0.25em] text-smoke">
+          {total} scanned {total === 1 ? "resource" : "resources"} · 6 real aggregates
         </div>
       </header>
+      <h2
+        id="signals-title"
+        className="mirror-display-crush mt-3 text-[clamp(30px,8.6vw,64px)] uppercase text-ink"
+      >
+        Account-wide,
+        <br />
+        <span className="mirror-stroke-text">real signals</span>
+      </h2>
+      <p className="mt-4 max-w-lg font-mono text-xs leading-relaxed text-smoke">
+        Six aggregates, recomputed from the {total} scanned {total === 1 ? "resource" : "resources"} on this
+        page. Nothing cached, nothing rounded up, nothing invented.
+      </p>
 
       <div className="mt-8 grid grid-cols-1 border-l border-t border-white/10 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item, i) => (

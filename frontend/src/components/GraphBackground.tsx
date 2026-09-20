@@ -178,10 +178,14 @@ function makeGlowTexture(): THREE.Texture {
 }
 
 /**
- * A four-point sparkle — a tight bright core plus thin horizontal/vertical
- * spikes, drawn with `lighter` compositing so the spikes glow rather than
- * flatten. This replaces the soft round glow the evidence field used to use:
- * a blurred disc reads as an "out of place UI dot," a spike reads as a star.
+ * An unmistakable eight-point asterisk — a bright core, four full-length
+ * cardinal spikes, and four shorter diagonal spikes, all drawn with
+ * `lighter` compositing so they glow rather than flatten. This has to read
+ * as a literal `*` even at the small on-screen size a mote renders at and
+ * even rendered `depthTest: false` on top of a bright accretion disk — a
+ * subtle sparkle disappeared into that background, so this version is
+ * deliberately bolder: bigger core, thicker/brighter spikes, than a
+ * realistic star sprite would use.
  */
 function makeStarTexture(): THREE.Texture {
   const size = 64;
@@ -192,29 +196,37 @@ function makeStarTexture(): THREE.Texture {
   const c = size / 2;
   ctx.globalCompositeOperation = "lighter";
 
-  const core = ctx.createRadialGradient(c, c, 0, c, c, size * 0.16);
-  core.addColorStop(0, "rgba(255,255,255,1)");
-  core.addColorStop(0.5, "rgba(255,255,255,0.7)");
-  core.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = core;
-  ctx.fillRect(0, 0, size, size);
-
-  const spike = (w: number) => {
-    const g = ctx.createLinearGradient(0, 0, w, 0);
+  const spike = (len: number, w: number, alpha: number) => {
+    const g = ctx.createLinearGradient(-len, 0, len, 0);
     g.addColorStop(0, "rgba(255,255,255,0)");
-    g.addColorStop(0.5, "rgba(255,255,255,0.85)");
+    g.addColorStop(0.5, `rgba(255,255,255,${alpha})`);
     g.addColorStop(1, "rgba(255,255,255,0)");
-    return g;
+    ctx.fillStyle = g;
+    ctx.fillRect(-len, -w / 2, len * 2, w);
   };
 
   ctx.save();
   ctx.translate(c, c);
-  ctx.fillStyle = spike(size);
-  ctx.fillRect(-c, -0.8, size, 1.6);
-  ctx.rotate(Math.PI / 2);
-  ctx.fillStyle = spike(size);
-  ctx.fillRect(-c, -0.8, size, 1.6);
+  // Four cardinal spikes (the main + of the asterisk).
+  for (let i = 0; i < 4; i++) {
+    spike(c, 3.2, 1);
+    ctx.rotate(Math.PI / 2);
+  }
+  // Four diagonal spikes, shorter and dimmer — what turns a "+" into a "*".
+  ctx.rotate(Math.PI / 4);
+  for (let i = 0; i < 4; i++) {
+    spike(c * 0.62, 2.2, 0.7);
+    ctx.rotate(Math.PI / 2);
+  }
   ctx.restore();
+
+  // Bright core drawn last, on top of every spike's centre.
+  const core = ctx.createRadialGradient(c, c, 0, c, c, size * 0.22);
+  core.addColorStop(0, "rgba(255,255,255,1)");
+  core.addColorStop(0.45, "rgba(255,255,255,0.85)");
+  core.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, size, size);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -2098,24 +2110,32 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
           Rendered as three star-textured clouds (not one flat blob cloud) so
           size itself carries real severity: BLOCKED biggest, NEEDS_REVIEW
           medium, SAFE smallest — the priority order red > yellow > green.
+
+          `depthTest={false}` is deliberate: these are findings, not set
+          dressing, and the founder wants the event horizon itself to double
+          as a readout — every abnormality visible as a star against the
+          silhouette, never swallowed by it. They already fade with real
+          scroll position (see the frame loop above), so they still recede
+          honestly; they just never disappear behind the sphere.
         */}
         {(["BLOCKED", "NEEDS_REVIEW", "SAFE"] as const).map((verdict) => {
           const geo = { BLOCKED: blockedGeo, NEEDS_REVIEW: reviewGeo, SAFE: safeGeo }[verdict];
           if (moteBuckets[verdict].length === 0) return null;
           return (
-            <points key={`motes-${verdict}`} geometry={geo}>
+            <points key={`motes-${verdict}`} geometry={geo} renderOrder={10}>
               <pointsMaterial
                 ref={(mat) => {
                   moteMatRefs.current[verdict] = mat;
                 }}
                 map={starTex}
-                size={MOTE_SIZE[verdict] * place.nodeScale}
+                size={MOTE_SIZE[verdict] * place.nodeScale * 1.6}
                 sizeAttenuation
                 vertexColors
                 transparent
-                opacity={0.9}
+                opacity={0.95}
                 blending={THREE.AdditiveBlending}
                 depthWrite={false}
+                depthTest={false}
                 toneMapped={false}
               />
             </points>
