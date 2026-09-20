@@ -63,6 +63,20 @@ const MAX_PULSES = 64;
 const PARALLAX_X = 0.3;
 const PARALLAX_Y = 0.2;
 
+/**
+ * Camera drift, on top of the parallax pan — a slow breath so the scene is
+ * never still even when the pointer is.
+ *
+ * X is deliberately one-sided and small. A positive camera x shifts projected
+ * content LEFT, toward the headline, and PARALLAX_X already spends most of the
+ * measured clearance budget; so the X drift is clamped to [-DRIFT_X, 0] and can
+ * only ever push the structure further AWAY from the type. Y and Z are free —
+ * the headline competes on the horizontal axis only, and the Z term is a dolly.
+ */
+const DRIFT_X = 0.24;
+const DRIFT_Y = 0.42;
+const DRIFT_Z = 0.5;
+
 /* ------------------------------------------------------------------ *
  * Layout
  * ------------------------------------------------------------------ */
@@ -243,6 +257,122 @@ export function buildLayout(results: MirrorResult[]): { nodes: LayoutNode[]; edg
 }
 
 /* ------------------------------------------------------------------ *
+ * Evidence field
+ * ------------------------------------------------------------------ */
+
+function len(a: unknown): number {
+  return Array.isArray(a) ? a.length : 0;
+}
+
+/**
+ * How many distinct pieces of evidence Mirror actually holds on one resource.
+ *
+ * This is the count of real records in the payload — every Cedar reason,
+ * every blast-radius hop, every adversarial CloudWatch reading, every
+ * decision-matrix scenario, every downstream effect in the future diff, every
+ * rollback step. It is not a density knob: turning it up would mean inventing
+ * findings, so it can only ever be what the scan returned.
+ */
+export function evidenceCount(r: MirrorResult): number {
+  return (
+    len(r.cedar_reasons) +
+    len(r.blast_radius) +
+    len(r.adversarial) +
+    len(r.decision_matrix) +
+    len(r.future_diff?.downstream) +
+    len(r.rollback_plan?.steps)
+  );
+}
+
+/** One orbiting mote. `owner` indexes the node array `buildLayout` produced. */
+export interface EvidenceMote {
+  owner: number;
+  verdict: Verdict;
+  /** Owner's real risk_score, normalised to [0,1]. Drives brightness. */
+  heat: number;
+  /** Orbit radius in node-scale units. */
+  radius: number;
+  phase: number;
+  /** Radians per second, signed — half the field orbits the other way. */
+  speed: number;
+  /** Orthonormal basis of this mote's orbit plane. */
+  u: THREE.Vector3;
+  v: THREE.Vector3;
+}
+
+/**
+ * A hard ceiling so a pathological payload cannot turn the background into a
+ * per-frame CPU bill. The real sandbox produces ~80 motes; this is ~17x that.
+ */
+export const MAX_MOTES = 1400;
+
+/**
+ * The evidence field — the ambient cloud that gives the graph atmosphere
+ * without a single invented particle.
+ *
+ * Each mote is one real record, orbiting the resource it was found on. So the
+ * density around a node is literally how much Mirror knows about it: a
+ * resource with three dependency hops, two error readings and four scenarios
+ * wears a visibly thicker halo than an untouched scratch bucket. Deterministic
+ * throughout (FNV-1a + Fibonacci lattice, no Math.random), so the same scan
+ * renders the same sky every reload.
+ */
+export function buildEvidenceField(results: MirrorResult[]): EvidenceMote[] {
+  const motes: EvidenceMote[] = [];
+  const axis = new THREE.Vector3();
+  const ref = new THREE.Vector3();
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const n = evidenceCount(r);
+    const heat = clamp(r.risk_score, 0, 100) / 100;
+
+    for (let k = 0; k < n; k++) {
+      if (motes.length >= MAX_MOTES) return motes;
+
+      // The orbit normal is spread over the sphere so a node's motes form a
+      // shell rather than a single ring.
+      fibonacciPoint(k, n, axis);
+      const nearX = Math.abs(axis.x) < 0.9;
+      ref.set(nearX ? 1 : 0, nearX ? 0 : 1, 0);
+      const u = new THREE.Vector3().crossVectors(axis, ref).normalize();
+      const v = new THREE.Vector3().crossVectors(axis, u).normalize();
+
+      const h1 = hashUnit(`${r.resource}#${k}`);
+      const h2 = hashUnit(`${k}@${r.resource}`);
+
+      motes.push({
+        owner: i,
+        verdict: r.verdict,
+        heat,
+        // Kept tight on purpose. A wider field would spill left past the
+        // headline's clearance budget (see PARALLAX_X), and the reading only
+        // works if a mote visibly belongs to one resource.
+        radius: 0.3 + h1 * 0.7,
+        phase: h2 * Math.PI * 2,
+        speed: (0.09 + h1 * 0.2) * (h2 < 0.5 ? -1 : 1),
+        u,
+        v,
+      });
+    }
+  }
+
+  return motes;
+}
+
+/**
+ * The account's real aggregate severity: the share of scanned resources Cedar
+ * actually refused, in [0,1]. This is the one number that drives every
+ * reactive intensity in the scene — core distortion, shell brightness, edge
+ * opacity, pulse speed — so a clean account renders calm and a compromised one
+ * renders violent, from real data rather than a mood setting.
+ */
+export function severityOf(results: MirrorResult[]): number {
+  if (results.length === 0) return 0;
+  return results.filter((r) => r.verdict === "BLOCKED").length / results.length;
+}
+
+/* ------------------------------------------------------------------ *
  * Scene
  * ------------------------------------------------------------------ */
 
@@ -332,7 +462,73 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     [sphereGeo, reticleGeo, glowTex],
   );
 
+  /* ---------------- evidence field ---------------- */
+
+  const motes = useMemo(() => buildEvidenceField(results), [results]);
+
+  /**
+   * One interleaved buffer for the whole field: colours written once (they
+   * encode the owner's real verdict and risk and never change), positions
+   * rewritten per frame. A Points cloud is a single draw call, so the field
+   * costs one more draw no matter how much evidence the scan returned.
+   */
+  const moteGeo = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(motes.length * 3), 3),
+    );
+    const colors = new Float32Array(motes.length * 3);
+    const c = new THREE.Color();
+    motes.forEach((m, i) => {
+      // Risk is brightness, not hue: the verdict colour still has to read as
+      // the verdict, so a hot SAFE node burns brighter green, never orange.
+      c.set(VERDICT_COLOR[m.verdict]).multiplyScalar(0.5 + m.heat * 0.5);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    });
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }, [motes]);
+  useEffect(() => () => moteGeo.dispose(), [moteGeo]);
+
+  /* ---------------- reactive severity ---------------- */
+
+  const severity = useMemo(() => severityOf(results), [results]);
+  const meanRisk = useMemo(() => {
+    if (results.length === 0) return 0;
+    return (
+      results.reduce((n, r) => n + clamp(r.risk_score, 0, 100), 0) / results.length / 100
+    );
+  }, [results]);
+
+  /**
+   * The core's displacement amplitude. A calm account barely ripples; an
+   * account where Cedar refused most of what it was asked about boils. Both
+   * terms are real aggregates, so this is a readout with a skin on it.
+   */
+  const distortAmp = 0.05 + severity * 0.17 + meanRisk * 0.05;
+
+  /**
+   * A dense icosphere whose vertices are displaced on the CPU every frame.
+   * MeshBasicMaterial is unlit by design here, so only the silhouette carries
+   * the distortion — and a silhouette needs vertex density, which is why this
+   * is detail 4 (2562 vertices) rather than a coarse blob. ~7.7k sin() per
+   * frame is a rounding error next to the draw calls it sits beside.
+   */
+  const coreGeo = useMemo(() => new THREE.IcosahedronGeometry(1, 4), []);
+  const coreBase = useMemo(
+    () => Float32Array.from(coreGeo.attributes.position.array as ArrayLike<number>),
+    [coreGeo],
+  );
+  useEffect(() => () => coreGeo.dispose(), [coreGeo]);
+  const coreMeshRef = useRef<THREE.Mesh>(null);
+  const coreShellRef = useRef<THREE.Mesh>(null);
+
   const pulseCount = Math.min(layout.edges.length, MAX_PULSES);
+  /** Damage propagates faster the more of the account is actually blocked. */
+  const pulseRate = PULSE_RATE * (1 + severity * 0.8);
 
   // The risk core: a single dominant visual object at the real center of the
   // graph, colored by the account's real aggregate state — not decoration,
@@ -380,12 +576,17 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     // across the headline.
     const p = pointerRef.current;
     const scrolled = scrollRef.current;
+    // Three incommensurable periods (94s / 153s / 217s) so the drift never
+    // visibly repeats — the scene is always moving and never loops.
+    const driftX = reduced ? 0 : -DRIFT_X * (0.5 + 0.5 * Math.sin(t * 0.067));
+    const driftY = reduced ? 0 : Math.sin(t * 0.041) * DRIFT_Y;
+    const driftZ = reduced ? 0 : Math.sin(t * 0.029) * DRIFT_Z;
     camTarget.set(
-      reduced ? 0 : p.x * PARALLAX_X,
-      reduced ? 0 : -p.y * PARALLAX_Y,
+      reduced ? 0 : p.x * PARALLAX_X + driftX,
+      reduced ? 0 : -p.y * PARALLAX_Y + driftY,
       // As the page scrolls past the hero the graph recedes, so it settles
       // into a background behind the verdict table instead of competing.
-      BASE_CAMERA_Z + scrolled * 2.4,
+      BASE_CAMERA_Z + scrolled * 2.4 + driftZ,
     );
     // Easing needs a continuous frame loop; on demand there isn't one, so the
     // reduced-motion path snaps instead of chasing a target it would never reach.
@@ -399,7 +600,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       const spark = pulseRefs.current[i];
       if (!spark) continue;
       const e = layout.edges[i];
-      const u = reduced ? 0.5 : (t * PULSE_RATE + i * 0.37) % 1;
+      const u = reduced ? 0.5 : (t * pulseRate + i * 0.37) % 1;
       spark.position.lerpVectors(placed[e.from], placed[e.to], u);
       // Fade in and out at the endpoints so a spark never pops on top of a node.
       spark.material.opacity = Math.sin(Math.PI * u) * 0.95;
@@ -425,10 +626,73 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       ring.rotation.y = t * speed * 0.7;
     });
     // Slow ambient pulse on the core's glow — same 8-14s cinematic band as
-    // every other glow on the page, never a fast blink.
+    // every other glow on the page, never a fast blink. A blocked-heavy
+    // account burns brighter at the same cadence.
     if (coreGlowRef.current) {
       const pulse = reduced ? 1 : 0.85 + Math.sin(t * (Math.PI * 2) / 10) * 0.15;
-      coreGlowRef.current.material.opacity = 0.6 * pulse;
+      coreGlowRef.current.material.opacity = (0.52 + severity * 0.3) * pulse;
+    }
+
+    /*
+      The core's surface. Three orthogonal sine waves multiplied together give
+      a cheap, seamless, seed-free 3D field — the displacement equivalent of
+      the distort material, without pulling a shader library in. Vertices are
+      pushed along their own radius from the pristine copy in `coreBase`, so
+      the deformation never accumulates or drifts off the unit sphere.
+    */
+    const corePos = coreGeo.attributes.position;
+    const arr = corePos.array as Float32Array;
+    const tt = reduced ? 0 : t * 0.55;
+    for (let i = 0; i < arr.length; i += 3) {
+      const x = coreBase[i];
+      const y = coreBase[i + 1];
+      const z = coreBase[i + 2];
+      const n =
+        Math.sin(x * 2.1 + tt) *
+        Math.sin(y * 2.7 - tt * 0.83) *
+        Math.sin(z * 2.3 + tt * 0.61);
+      const d = 1 + distortAmp * n;
+      arr[i] = x * d;
+      arr[i + 1] = y * d;
+      arr[i + 2] = z * d;
+    }
+    corePos.needsUpdate = true;
+
+    // A breath on the whole core, and a wireframe shell turning against it so
+    // the object reads as a containment field around something unstable
+    // rather than as one spinning ball.
+    if (coreMeshRef.current && !reduced) {
+      coreMeshRef.current.scale.setScalar(coreRadius * (1 + Math.sin(t * 0.45) * 0.035));
+    }
+    if (coreShellRef.current && !reduced) {
+      coreShellRef.current.rotation.y = -t * 0.11;
+      coreShellRef.current.rotation.x = Math.sin(t * 0.07) * 0.5;
+    }
+
+    /*
+      The evidence field. Each mote rides a circle in its own plane around the
+      resource the record belongs to, with a slow radial breath so the shell
+      never crystallises into a set of clean rings.
+    */
+    if (motes.length > 0) {
+      const motePos = moteGeo.attributes.position;
+      const marr = motePos.array as Float32Array;
+      for (let i = 0; i < motes.length; i++) {
+        const m = motes[i];
+        const c = placed[m.owner];
+        if (!c) continue;
+        const a = m.phase + (reduced ? 0 : t * m.speed);
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        const r =
+          m.radius *
+          place.nodeScale *
+          (reduced ? 1 : 1 + Math.sin(t * 0.4 + m.phase) * 0.12);
+        marr[i * 3] = c.x + (m.u.x * cos + m.v.x * sin) * r;
+        marr[i * 3 + 1] = c.y + (m.u.y * cos + m.v.y * sin) * r;
+        marr[i * 3 + 2] = c.z + (m.u.z * cos + m.v.z * sin) * r;
+      }
+      motePos.needsUpdate = true;
     }
   });
 
@@ -453,9 +717,22 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
             toneMapped={false}
           />
         </sprite>
-        <mesh scale={coreRadius}>
-          <sphereGeometry args={[1, 32, 32]} />
+        <mesh ref={coreMeshRef} geometry={coreGeo} scale={coreRadius}>
           <meshBasicMaterial color={coreColor} toneMapped={false} />
+        </mesh>
+        {/* Containment shell: a coarse wireframe cage turning against the
+            core's own spin. It brightens with the real blocked share, so the
+            cage looks like it is straining on a bad account. */}
+        <mesh ref={coreShellRef} scale={coreRadius * 1.46}>
+          <icosahedronGeometry args={[1, 1]} />
+          <meshBasicMaterial
+            color={coreColor}
+            wireframe
+            transparent
+            opacity={0.14 + severity * 0.26}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
         {[1.55, 2.05, 2.6].map((mult, i) => (
           <mesh
@@ -469,7 +746,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
             <meshBasicMaterial
               color={coreColor}
               transparent
-              opacity={0.35 - i * 0.08}
+              opacity={0.3 + severity * 0.22 - i * 0.08}
               toneMapped={false}
             />
           </mesh>
@@ -542,9 +819,35 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
         );
       })}
 
+      {/*
+        The evidence field — one point per real record in the payload, orbiting
+        the resource it was found on. This is where the scene gets its depth
+        and its ambient shimmer, and not one mote of it is padding.
+      */}
+      {motes.length > 0 ? (
+        <points geometry={moteGeo}>
+          <pointsMaterial
+            map={glowTex}
+            size={0.14 * place.nodeScale}
+            sizeAttenuation
+            vertexColors
+            transparent
+            opacity={0.85}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </points>
+      ) : null}
+
       {layout.edges.length > 0 ? (
         <lineSegments geometry={edgeGeometry}>
-          <lineBasicMaterial color={HAZARD} transparent opacity={0.7} toneMapped={false} />
+          <lineBasicMaterial
+            color={HAZARD}
+            transparent
+            opacity={0.55 + severity * 0.35}
+            toneMapped={false}
+          />
         </lineSegments>
       ) : null}
 
@@ -581,11 +884,13 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
  * veil — the darkening belongs to the background, not to the type.
  *
  * `--hero-text-edge` is derived from the headline's real type metrics rather
- * than guessed: the hero's longest line ("this resource") measures 7.87em in
- * Unbounded 700 at font-size clamp(2rem, 10.3vw, 8.75rem), offset by the
- * hero's md:px-12 gutter. So the veil tracks the actual right edge of the
- * headline at every viewport width instead of drifting off it at, say, 1440px
- * where the type occupies ~80% of the screen.
+ * than guessed: the hero's longest line ("this resource") measures ~7.9em in
+ * Unbounded 900 at .mirror-display-crush's -0.055em tracking, at font-size
+ * clamp(1.9rem, 10vw, 9rem) — Hero.tsx's CLAIM_SIZE, which these two numbers
+ * must be kept in step with — offset by the hero's md:px-12 gutter. So the
+ * veil tracks the actual right edge of the headline at every viewport width
+ * instead of drifting off it at, say, 1440px where the type occupies ~80% of
+ * the screen.
  *
  * The vertical mask is what stops this from being a flat wash: the veil is a
  * band, opaque only across the horizontal slab the headline occupies, so the
@@ -604,7 +909,7 @@ const GRAPH_CSS = `
 */
 
 .mirror-graph-veil {
-  --hero-text-edge: calc(48px + 7.87 * clamp(2rem, 10.3vw, 8.75rem));
+  --hero-text-edge: calc(48px + 7.9 * clamp(1.9rem, 10vw, 9rem));
   position: absolute;
   inset: 0;
   background: linear-gradient(

@@ -20,6 +20,14 @@ const VERDICT_ORDER: Record<Verdict, number> = { BLOCKED: 0, NEEDS_REVIEW: 1, SA
 
 type SortKey = "verdict" | "risk_score" | "mirror_score";
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 function sortRows(rows: MirrorResult[], key: SortKey, dir: 1 | -1): MirrorResult[] {
   const copy = [...rows];
   copy.sort((a, b) => {
@@ -37,29 +45,31 @@ function SortHeader({
   active,
   dir,
   onClick,
-  className = "",
 }: {
   label: string;
   active: boolean;
   dir: 1 | -1;
   onClick: () => void;
-  className?: string;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest outline-none transition-colors duration-150 hover:text-white/80 focus-visible:text-white/80 ${
-        active ? "text-white/80" : "text-white/40"
-      } ${className}`}
+      aria-pressed={active}
+      className={`flex items-center gap-1 border-b px-1 pb-1 font-mono text-[10px] uppercase tracking-[0.2em] outline-none transition-colors duration-150 hover:text-ink focus-visible:text-ink ${
+        active ? "border-hazard text-ink" : "border-transparent text-smoke hover:border-white/20"
+      }`}
     >
       {label}
-      {active && <span>{dir === 1 ? "↑" : "↓"}</span>}
+      <span aria-hidden="true" className={active ? "text-hazard" : "opacity-0"}>
+        {dir === 1 ? "↑" : "↓"}
+      </span>
     </button>
   );
 }
 
 export function VerdictTable({ results }: VerdictTableProps) {
   const [selected, setSelected] = useState<Verdict[]>([]);
+  const [reduced] = useState(prefersReducedMotion);
   const [sortKey, setSortKey] = useState<SortKey>("verdict");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
@@ -86,7 +96,7 @@ export function VerdictTable({ results }: VerdictTableProps) {
   return (
     <section
       id="verdicts"
-      className="relative z-10 mx-auto max-w-4xl scroll-mt-32 px-6 py-24 sm:scroll-mt-24"
+      className="relative z-10 mx-auto max-w-4xl scroll-mt-32 px-4 py-24 sm:px-6 sm:scroll-mt-24"
     >
       {hasBlocked && (
         <Glow
@@ -95,36 +105,56 @@ export function VerdictTable({ results }: VerdictTableProps) {
           className="-z-10 left-1/2 top-0 h-[420px] w-[420px] -translate-x-1/2"
         />
       )}
+
+      {/* Section plate — gallery label, then the census. */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
+        className="mb-8"
+        initial={reduced ? false : { opacity: 0, y: 20 }}
         whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-100px" }}
+        viewport={{ once: true, margin: "-80px" }}
         transition={{ duration: 0.5, ease: ENTRANCE_EASE }}
       >
-        <StatTiles counts={counts} />
+        <div className="mirror-hairline flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 pt-4">
+          <div className="mirror-eyebrow text-sm text-smoke">the ledger</div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-smoke">
+            {results.length} resource{results.length === 1 ? "" : "s"} · 7 real signals each
+          </div>
+        </div>
+        <h2 className="mirror-display-crush mt-3 text-[clamp(30px,8.6vw,64px)] uppercase text-ink">
+          Every verdict,
+          <br />
+          <span className="mirror-stroke-text">every signal</span>
+        </h2>
       </motion.div>
+
+      <StatTiles counts={counts} />
+
       <motion.div
-        className="mt-10 mb-6"
-        initial={{ opacity: 0, y: 24 }}
+        className="mt-8 mb-5"
+        initial={reduced ? false : { opacity: 0, y: 20 }}
         whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-100px" }}
+        viewport={{ once: true, margin: "-80px" }}
         transition={{ delay: 0.1, duration: 0.5, ease: ENTRANCE_EASE }}
       >
         <VerdictPills selected={selected} onChange={setSelected} counts={counts} />
       </motion.div>
+
       <motion.div
-        className="mirror-glass overflow-hidden"
-        initial={{ opacity: 0, y: 24 }}
+        className="mirror-panel relative overflow-hidden"
+        initial={reduced ? false : { opacity: 0, y: 20 }}
         whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-100px" }}
-        transition={{ delay: 0.2, duration: 0.5, ease: ENTRANCE_EASE }}
+        viewport={{ once: true, margin: "-80px" }}
+        transition={{ delay: 0.15, duration: 0.5, ease: ENTRANCE_EASE }}
       >
-        <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 border-b border-white/10 px-4 py-3 sm:grid-cols-[auto_1fr_auto_auto_auto_auto]">
-          <SortHeader label="Verdict" active={sortKey === "verdict"} dir={sortDir} onClick={() => toggleSort("verdict")} />
-          <span />
-          <span className="hidden font-mono text-[10px] uppercase tracking-widest text-white/40 sm:block">
-            Reversibility
-          </span>
+        {/* Sort toolbar — mono micro-labels, hairline-underlined when active. */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-white/10 px-4 py-3">
+          <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-smoke">sort</span>
+          <SortHeader
+            label="Verdict"
+            active={sortKey === "verdict"}
+            dir={sortDir}
+            onClick={() => toggleSort("verdict")}
+          />
           <SortHeader
             label="Score"
             active={sortKey === "mirror_score"}
@@ -137,16 +167,40 @@ export function VerdictTable({ results }: VerdictTableProps) {
             dir={sortDir}
             onClick={() => toggleSort("risk_score")}
           />
-          <span />
+          <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.2em] text-smoke">
+            <span className="tabular-nums text-ink/80">{visible.length}</span>
+            <span className="text-smoke"> / {results.length} shown</span>
+          </span>
         </div>
+
         {visible.length === 0 ? (
-          <div data-testid="verdict-table-empty" className="px-6 py-8 text-center">
-            <div className="font-mono text-xs uppercase tracking-widest text-white/60">
+          <div data-testid="verdict-table-empty" className="px-6 py-14 text-center">
+            <div
+              aria-hidden="true"
+              className="mirror-display-crush mirror-stroke-text text-[clamp(36px,10vw,64px)] uppercase"
+            >
+              empty
+            </div>
+            <div className="mt-4 font-mono text-xs uppercase tracking-[0.25em] text-smoke">
               no resources match this filter
             </div>
           </div>
         ) : (
-          visible.map((r) => <VerdictRow key={r.resource} result={r} />)
+          visible.map((r, i) => (
+            <motion.div
+              key={r.resource}
+              initial={reduced ? false : { opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-20px" }}
+              transition={{
+                delay: Math.min(i * 0.04, 0.4),
+                duration: 0.4,
+                ease: ENTRANCE_EASE,
+              }}
+            >
+              <VerdictRow result={r} />
+            </motion.div>
+          ))
         )}
       </motion.div>
     </section>

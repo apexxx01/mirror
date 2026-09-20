@@ -37,18 +37,38 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen">
+      {/*
+        Fixed atmosphere, stacked behind everything: the 64px structural
+        grid, film grain so no flat black reads as dead, and the halftone
+        bloom. All three are decorative, pointer-events:none, and defined
+        in index.css.
+      */}
       <div className="mirror-grid" />
+      <div className="mirror-grain" />
       <div className="mirror-halftone" />
       <Suspense fallback={<div className="fixed inset-0 -z-10 bg-void" />}>
         <GraphBackground results={results} />
       </Suspense>
+
       <Nav hasFullStory={hasFullStory} />
-      <Hero counts={counts} total={results.length} />
-      <FeatureLegend />
-      <AccountSignals results={results} />
-      <KillSwitchBanner results={results} />
-      {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
-      <VerdictTable results={results} />
+
+      {/*
+        Composition order is the argument: the claim (Hero), the key that
+        makes the claim readable (FeatureLegend), the scale of the account
+        (AccountSignals), the one place Mirror hard-stops (KillSwitchBanner —
+        the page's single full-bleed detonation, deliberately interrupting the
+        hairline rhythm), the model's read of it (BedrockBanner), and then the
+        per-resource proof (VerdictTable).
+      */}
+      <main>
+        <Hero counts={counts} total={results.length} />
+        <FeatureLegend />
+        <AccountSignals results={results} />
+        <KillSwitchBanner results={results} />
+        {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}
+        <VerdictTable results={results} />
+      </main>
+
       <Footer />
       {data && <MirrorChat payload={data} />}
     </div>

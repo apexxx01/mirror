@@ -2,43 +2,133 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
-  color: #f2f2ee;
-  height: 100%;
+/*
+  MIRROR v2 — "unforgiving glass on obsidian" design system.
+  Synthesis of four references (Charlie / Hyperstudio / Midjourney /
+  Letter), fused onto Mirror's own fixed palette: #0A0A0A void,
+  #FF1E1E hazard (the single chromatic detonation — never used for the
+  fixed BLOCKED/NEEDS_REVIEW/SAFE status colors, which stay their own
+  hues so a judge never confuses "aggressive brand accent" with "this
+  resource is dangerous").
+
+  Rules this file encodes for every component built on top of it:
+  - Display type (font-display, Unbounded 900) is used at brutal scale
+    only — 96px+ — with crushed line-height and negative tracking. It
+    is never used for body or UI chrome.
+  - Space Mono is the UNIVERSAL UI voice — nav, labels, data, buttons,
+    captions — echoing the Midjourney reference's "monospace as
+    identity, not code-context exception."
+  - Fraunces italic is a rare accent for gallery-label moments (pull
+    quotes, section eyebrows) — never for a full paragraph.
+  - Structure is carried by 1px hairline borders (--line), not shadows.
+    Elevation is border + background-step only.
+  - Rounded corners are banned except on pills (nav chips, buttons) —
+    everything else is 0px, hard edges, brutalist.
+*/
+
+:root {
+  --void: #0A0A0A;
+  --carbon: #050505;
+  --line: rgba(242, 242, 238, 0.14);
+  --line-strong: rgba(242, 242, 238, 0.28);
+  --ink: #f2f2ee;
+  --smoke: #9c9c9c;
+  --hazard: #FF1E1E;
+  --gold: #C9A876;
 }
 
-/* The large CSS glow blobs (Hero, VerdictTable, KillSwitchBanner) are
-   deliberately oversized and deliberately bleed past their section's edges
-   for a soft, ambient look — clipped here at the document root rather than
-   individually, so narrow viewports never gain horizontal scroll from a
-   blob that's still visually correct bleeding off-screen. */
+html, body, #root {
+  color: var(--ink);
+}
+
 html, body {
   overflow-x: hidden;
 }
 
-/*
-  Dark cinematic / glass direction: a faint fixed grid sits behind everything
-  (echoing the Cortexa reference), independent of GraphBackground's own
-  -z-10 layer. -z-20 keeps it strictly behind the graph, which is itself
-  behind body/#root's transparency (see the comment below).
-*/
+html {
+  color-scheme: dark;
+  background-color: var(--void);
+  scroll-behavior: smooth;
+}
+
+body, #root {
+  background-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+::selection {
+  background: var(--hazard);
+  color: var(--void);
+}
+
+/* ------------------------------------------------------------------ */
+/* Layers: grid, grain, halftone — fixed, decorative, stacked behind    */
+/* everything including GraphBackground (-z-10).                       */
+/* ------------------------------------------------------------------ */
+
 .mirror-grid {
   position: fixed;
   inset: 0;
-  z-index: -20;
+  z-index: -30;
   background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 56px 56px;
+    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 64px 64px;
   pointer-events: none;
 }
 
-/*
-  Glass surface: translucent dark fill + blur + a hairline border. Used on
-  every card-like element (stat tiles, kill-switch banner, expanded row
-  detail, Bedrock summary). Rounded moderately — this direction commits to
-  soft glass, not the brutalist zero-radius rule from an earlier pass.
-*/
+/* Film-grain noise, pure CSS via a tiled SVG turbulence data-URI — no
+   raster asset shipped. Sits above the grid, below the graph, giving
+   every flat black surface a faint unforgiving texture instead of
+   reading as a dead flat fill. */
+.mirror-grain {
+  position: fixed;
+  inset: 0;
+  z-index: -25;
+  opacity: 0.05;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+.mirror-halftone {
+  position: fixed;
+  inset: 0;
+  z-index: -15;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1.5px);
+  background-size: 16px 16px;
+  opacity: 0.07;
+  -webkit-mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
+  mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Surfaces                                                             */
+/* ------------------------------------------------------------------ */
+
+/* Brutalist hairline panel: hard edge, zero radius, structural border
+   only — no blur, no glow. This is the DEFAULT surface for this
+   redesign (glass is now the exception, reserved for floating chrome
+   like the chat FAB and nav). */
+.mirror-panel {
+  background: var(--carbon);
+  border: 1px solid var(--line);
+}
+
+.mirror-panel-hover {
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.mirror-panel-hover:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Reserved for floating chrome only (nav, chat FAB) — the one place
+   glassmorphism survives from the prior pass. */
 .mirror-glass {
   background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
@@ -47,8 +137,14 @@ html, body {
   border-radius: 16px;
 }
 
-/* Large soft blurred gradient blob — the "3D-feeling" hero/section glow,
-   built from CSS alone (radial-gradient + blur), never a raster asset. */
+/* The single chromatic detonation — full-bleed hazard-red block, used
+   at most once or twice per page (hero backdrop wash, kill-switch
+   banner). Never a card, never contained. */
+.mirror-detonation {
+  background: var(--hazard);
+  color: var(--void);
+}
+
 .mirror-glow {
   position: absolute;
   border-radius: 9999px;
@@ -64,12 +160,39 @@ html, body {
   50% { opacity: 0.85; transform: scale(1.08); }
 }
 
-/* Dashed/glitch stripe text treatment (reference 1's "unseen") — a
-   repeating gradient clipped to the text, alternating solid/transparent
-   bands instead of a flat fill. Uses a fixed color rather than currentColor:
-   background-clip:text requires the element's own `color` to be transparent
-   to reveal the background, and currentColor would resolve to that same
-   transparent value, making the whole thing invisible. */
+@media (prefers-reduced-motion: reduce) {
+  .mirror-glow { animation: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Typography                                                           */
+/* ------------------------------------------------------------------ */
+
+/* Brutal display type: crushed line-height, aggressive negative
+   tracking, viewport-bleeding scale. Apply on top of a Tailwind
+   text-[…] size utility — this class only sets the crush/weight. */
+.mirror-display {
+  font-family: "Unbounded", sans-serif;
+  font-weight: 900;
+  line-height: 0.82;
+  letter-spacing: -0.04em;
+}
+
+.mirror-display-crush {
+  font-family: "Unbounded", sans-serif;
+  font-weight: 900;
+  line-height: 0.74;
+  letter-spacing: -0.055em;
+}
+
+/* Gallery-label serif accent — Fraunces italic, sparing use only. */
+.mirror-eyebrow {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 .mirror-glitch-text {
   background-image: repeating-linear-gradient(
     to bottom,
@@ -83,44 +206,73 @@ html, body {
   color: transparent;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mirror-glow { animation: none; }
+/* Outlined stroke type — hollow letterforms, brutalist poster move for
+   secondary massive headlines so not every big word is a solid fill. */
+.mirror-stroke-text {
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--ink);
 }
 
-/* Halftone/dithered dot-matrix texture (reference 3's dithered-photo
-   treatment) — a pure CSS radial-gradient dot tile, purely decorative.
-   Masked to concentrate around the hero's graph/orb area and fade to
-   nothing elsewhere, so it reads as one deliberate textured region
-   rather than a flat wash over real data. */
-.mirror-halftone {
-  position: fixed;
+/* ------------------------------------------------------------------ */
+/* Structure                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Diagonal clip-path section divider — a hard-edged brutalist seam
+   between sections, replacing a plain straight border where a section
+   needs to announce a transition (hero -> content). */
+.mirror-diagonal-in {
+  clip-path: polygon(0 3vw, 100% 0, 100% 100%, 0 100%);
+}
+.mirror-diagonal-out {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 3vw));
+}
+
+.mirror-hairline {
+  border-top: 1px solid var(--line);
+}
+
+/* Ticking marquee row — real resource names scroll past as a live
+   strip, used sparingly (one placement) for the "sensory overload"
+   texture the reference sites lean on. Pure CSS keyframe, pauses on
+   hover, respects reduced-motion. */
+.mirror-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: mirror-marquee 38s linear infinite;
+}
+.mirror-marquee-track:hover {
+  animation-play-state: paused;
+}
+@keyframes mirror-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-marquee-track { animation: none; }
+}
+
+/* Scanline sweep — a single thin bright line drifting down a panel,
+   reinforcing the "system actively watching" feel without being a
+   spinner. */
+.mirror-scanline {
+  position: absolute;
   inset: 0;
-  z-index: -15;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1.5px);
-  background-size: 16px 16px;
-  opacity: 0.07;
-  -webkit-mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
-  mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
+  overflow: hidden;
   pointer-events: none;
 }
-
-html {
-  /* Dark-mode-only page: without this, the browser renders light-scheme UA
-     chrome — scrollbars and the default focus ring — over a #0A0A0A page. */
-  color-scheme: dark;
-  background-color: #0A0A0A;
+.mirror-scanline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 40%;
+  background: linear-gradient(to bottom, transparent, rgba(255, 30, 30, 0.06), transparent);
+  animation: mirror-scan 6s ease-in-out infinite;
 }
-
-/*
-  body and #root are deliberately transparent rather than re-painted with the
-  void color: GraphBackground (src/components/GraphBackground.tsx) renders a
-  fixed, -z-10 layer behind the whole app. Per CSS painting order, a
-  negative-z descendant is painted BEFORE the in-flow backgrounds of its
-  ancestors, so an opaque fill on body/#root would bury that layer regardless
-  of z-index. html keeps the real #0A0A0A fill and is what actually shows
-  through everywhere the graph doesn't touch (or when it isn't mounted, e.g.
-  no WebGL), so the page still reads as void top to bottom either way.
-*/
-body, #root {
-  background-color: transparent;
+@keyframes mirror-scan {
+  0% { top: -40%; }
+  100% { top: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-scanline::after { animation: none; display: none; }
 }
