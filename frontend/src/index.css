@@ -67,6 +67,16 @@ body, #root {
 /* ------------------------------------------------------------------ */
 /* Layers: grid, grain, halftone — fixed, decorative, stacked behind    */
 /* everything including GraphBackground (-z-10).                       */
+/*                                                                     */
+/* All three parallax against each other on real scroll position.      */
+/* GraphBackground publishes `--mirror-scroll-y` (raw scrollY as a bare */
+/* number) from the one rAF-throttled scroll listener the page already  */
+/* had, so this costs no extra listener, no extra element and no React  */
+/* state — just three composited transforms. The grid recedes upward,   */
+/* the halftone bloom drifts down against it, and the grain creeps the  */
+/* other way; the result is three depth planes behind a fixed 3D scene  */
+/* rather than one flat wallpaper. Multipliers are deliberately tiny —  */
+/* this should register as depth, never as movement.                    */
 /* ------------------------------------------------------------------ */
 
 .mirror-grid {
@@ -78,6 +88,8 @@ body, #root {
     linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
   background-size: 64px 64px;
   pointer-events: none;
+  transform: translate3d(0, calc(var(--mirror-scroll-y, 0) * -0.035px), 0);
+  will-change: transform;
 }
 
 /* Film-grain noise, pure CSS via a tiled SVG turbulence data-URI — no
@@ -92,18 +104,35 @@ body, #root {
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   mix-blend-mode: overlay;
+  transform: translate3d(0, calc(var(--mirror-scroll-y, 0) * 0.012px), 0);
+  will-change: transform;
 }
 
+/* Masked onto the artifact's own quadrant (62% / 40%), so the halftone reads
+   as the bloom breaking up around the core rather than as a stray texture in
+   the corner. It drifts DOWN as the page scrolls up — the nearest plane, and
+   the only one that moves against the scroll. */
 .mirror-halftone {
   position: fixed;
   inset: 0;
   z-index: -15;
   background-image: radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1.5px);
   background-size: 16px 16px;
-  opacity: 0.07;
-  -webkit-mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
-  mask-image: radial-gradient(ellipse 45% 55% at 78% 28%, #000 0%, transparent 70%);
+  opacity: 0.08;
+  -webkit-mask-image: radial-gradient(ellipse 52% 62% at 62% 42%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(ellipse 52% 62% at 62% 42%, #000 0%, transparent 72%);
   pointer-events: none;
+  transform: translate3d(0, calc(var(--mirror-scroll-y, 0) * 0.058px), 0);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mirror-grid,
+  .mirror-grain,
+  .mirror-halftone {
+    transform: none;
+    will-change: auto;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -119,12 +148,58 @@ body, #root {
   border: 1px solid var(--line);
 }
 
+/*
+  Hairline cells that stand up off the page when you reach for them.
+
+  The lift is a real 3D transform, not a translate: a 900px perspective with
+  the origin pinned to the bottom edge, so the card hinges toward the viewer
+  and its top edge travels further than its bottom. At 1.4deg that reads as
+  the surface catching the light rather than as an animation — which is the
+  whole point, because these cells carry real numbers and must never wobble.
+
+  A raking sheen crosses the cell at the same time (::after, additive-ish
+  white at 4%), so the "light" the tilt implies actually exists. Both are
+  pure CSS on a class these cards already use, which is why the legend, the
+  signal tiles and the table rows pick it up without being touched.
+*/
 .mirror-panel-hover {
-  transition: border-color 160ms ease, background-color 160ms ease;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: border-color 160ms ease, background-color 160ms ease,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.mirror-panel-hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    116deg,
+    transparent 28%,
+    rgba(255, 255, 255, 0.045) 48%,
+    rgba(201, 168, 118, 0.05) 54%,
+    transparent 72%
+  );
+  transition: opacity 260ms ease;
 }
 .mirror-panel-hover:hover {
   border-color: var(--line-strong);
   background: rgba(255, 255, 255, 0.02);
+  transform: perspective(900px) translate3d(0, -2px, 0) rotateX(1.4deg);
+  transform-origin: bottom center;
+}
+.mirror-panel-hover:hover::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mirror-panel-hover,
+  .mirror-panel-hover:hover {
+    transform: none;
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  .mirror-panel-hover::after { transition: none; }
 }
 
 /* Reserved for floating chrome only (nav, chat FAB) — the one place
