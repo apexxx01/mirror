@@ -13,7 +13,7 @@ export default {
         blocked: "#DC2626",
         review: "#EAB308",
         safe: "#16A34A",
-        void: "#0A0A0A",
+        void: "#050509",
         carbon: "#050505",
         ink: "#f2f2ee",
         smoke: "#9c9c9c",
