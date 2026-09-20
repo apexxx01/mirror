@@ -314,32 +314,37 @@ describe("buildGlyphStream — every glyph is a real payload string", () => {
     }),
   ];
 
-  /** Every literal the payload can legitimately contribute a glyph for. */
+  /**
+   * Every short code the real pipeline can legitimately contribute a glyph
+   * for — mirroring `buildGlyphStream`'s own compression (single-letter
+   * verdict/reversibility, a bare risk number, the decision's last dot
+   * segment, a 3-letter badge, and an ordinal per evidence record) rather
+   * than the raw field text, since glyphs are compact codes now, not
+   * sentences.
+   */
   const vocabulary = (results: MirrorResult[]): string[] => {
     const out: string[] = [];
+    const revLetter: Record<string, string> = { HIGH: "H", MEDIUM: "M", LOW: "L" };
+    const verdictLetter: Record<string, string> = { BLOCKED: "B", NEEDS_REVIEW: "R", SAFE: "S" };
     for (const r of results) {
-      out.push(r.resource, r.node_name, r.verdict, `risk ${r.risk_score}`, r.cedar_decision);
-      out.push(`rev ${r.reversibility.level}`, r.mirror_score.badge);
-      out.push(...r.cedar_reasons);
+      out.push(verdictLetter[r.verdict], String(r.risk_score));
+      out.push(r.cedar_decision.split(".").pop() ?? r.cedar_decision);
+      out.push(revLetter[r.reversibility.level] ?? r.reversibility.level);
+      out.push(r.mirror_score.badge.slice(0, 3));
+      r.cedar_reasons.forEach((_reason, i) => out.push(`r${i + 1}`));
       for (const b of r.blast_radius) {
-        out.push(`hop${b.hop} inv ${b.invocations_90d}`, `hop${b.hop} ${b.resource}`);
+        out.push(typeof b.invocations_90d === "number" ? `h${b.hop}:${b.invocations_90d}` : `h${b.hop}`);
       }
-      for (const a of r.adversarial) out.push(`hop${a.hop} err ${a.errors} thr ${a.throttles}`);
-      for (const row of r.decision_matrix) out.push(row.scenario);
-      for (const d of r.future_diff.downstream) out.push(`via ${d.via}`);
-      out.push(...r.rollback_plan.steps);
+      for (const a of r.adversarial) out.push(`h${a.hop}e${a.errors ?? 0}t${a.throttles ?? 0}`);
+      r.decision_matrix.forEach((_row, i) => out.push(`m${i + 1}`));
+      r.future_diff.downstream.forEach((_d, i) => out.push(`v${i + 1}`));
+      r.rollback_plan.steps.forEach((_s, i) => out.push(`s${i + 1}`));
     }
     return out;
   };
 
   it("emits nothing that is not traceable to a field in the payload", () => {
-    const prefix = sharedNamePrefix(rich);
-    const allowed = new Set(
-      vocabulary(rich).flatMap((s) => [
-        shortenToken(s),
-        shortenToken(prefix ? s.split(prefix).join("") : s),
-      ]),
-    );
+    const allowed = new Set(vocabulary(rich).map((s) => shortenToken(s)));
     const glyphs = buildGlyphStream(rich);
     expect(glyphs.length).toBeGreaterThan(0);
     for (const g of glyphs) {
@@ -348,9 +353,10 @@ describe("buildGlyphStream — every glyph is a real payload string", () => {
   });
 
   it("emits one glyph per real record on top of the per-resource fields", () => {
-    // 7 fixed fields (resource, verdict, risk, cedar decision, reversibility,
-    // badge) — six of them — plus one per evidence record.
-    const expected = rich.reduce((n, r) => n + 6 + evidenceCount(r), 0);
+    // 5 fixed fields (verdict, risk, cedar decision, reversibility, badge —
+    // the resource name itself is no longer a glyph, see buildGlyphStream's
+    // comment) plus one per evidence record.
+    const expected = rich.reduce((n, r) => n + 5 + evidenceCount(r), 0);
     expect(buildGlyphStream(rich)).toHaveLength(expected);
   });
 
@@ -372,7 +378,9 @@ describe("buildGlyphStream — every glyph is a real payload string", () => {
         { scenario: "if zero dependents", dependents_count: 0, risk_score: 0, verdict: "SAFE" },
       ],
     });
-    const glyph = buildGlyphStream([row]).find((g) => g.text === "if zero dependents");
+    // Decision-matrix scenarios are represented by their ordinal ("m1" for
+    // the first row), not their text — see buildGlyphStream's own comment.
+    const glyph = buildGlyphStream([row]).find((g) => g.text === "m1");
     expect(glyph?.verdict).toBe("SAFE");
   });
 
@@ -403,7 +411,7 @@ describe("buildGlyphStream — every glyph is a real payload string", () => {
 
 describe("shortenToken", () => {
   it("leaves a string that already fits exactly as the payload wrote it", () => {
-    expect(shortenToken("Decision.Deny")).toBe("Decision.Deny");
+    expect(shortenToken("ALLOW")).toBe("ALLOW");
   });
 
   it("marks a truncation rather than silently cutting the string", () => {
@@ -414,8 +422,8 @@ describe("shortenToken", () => {
     expect(long.startsWith(out.slice(0, -1))).toBe(true);
   });
 
-  it("collapses whitespace so a multi-line rollback step stays one glyph", () => {
-    expect(shortenToken("  restore\n  the rule ")).toBe("restore the rule");
+  it("collapses whitespace so a multi-line token stays one glyph", () => {
+    expect(shortenToken("  fix it  \n now ")).toBe("fix it now");
   });
 });
 

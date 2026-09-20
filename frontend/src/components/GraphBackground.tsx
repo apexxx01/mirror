@@ -65,7 +65,9 @@ const VERDICT_COLOR: Record<Verdict, string> = {
 };
 /** Hazard red is reserved for evidence of a real dependency: edges and reticles. */
 const HAZARD = "#FF1E1E";
-const VOID = "#0A0A0A";
+/** Deepest near-black with a whisper of blue — pitch black that still reads
+ *  as space rather than a flat UI fill. Matches --void in index.css. */
+const VOID = "#050509";
 
 const BASE_CAMERA_Z = 12;
 /** ~125s per revolution. Slow enough to read as drift, not as a turntable. */
@@ -170,6 +172,50 @@ function makeGlowTexture(): THREE.Texture {
   g.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * A four-point sparkle — a tight bright core plus thin horizontal/vertical
+ * spikes, drawn with `lighter` compositing so the spikes glow rather than
+ * flatten. This replaces the soft round glow the evidence field used to use:
+ * a blurred disc reads as an "out of place UI dot," a spike reads as a star.
+ */
+function makeStarTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const c = size / 2;
+  ctx.globalCompositeOperation = "lighter";
+
+  const core = ctx.createRadialGradient(c, c, 0, c, c, size * 0.16);
+  core.addColorStop(0, "rgba(255,255,255,1)");
+  core.addColorStop(0.5, "rgba(255,255,255,0.7)");
+  core.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, size, size);
+
+  const spike = (w: number) => {
+    const g = ctx.createLinearGradient(0, 0, w, 0);
+    g.addColorStop(0, "rgba(255,255,255,0)");
+    g.addColorStop(0.5, "rgba(255,255,255,0.85)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    return g;
+  };
+
+  ctx.save();
+  ctx.translate(c, c);
+  ctx.fillStyle = spike(size);
+  ctx.fillRect(-c, -0.8, size, 1.6);
+  ctx.rotate(Math.PI / 2);
+  ctx.fillStyle = spike(size);
+  ctx.fillRect(-c, -0.8, size, 1.6);
+  ctx.restore();
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -694,8 +740,10 @@ export function verdictShares(results: MirrorResult[]): Record<Verdict, number> 
  * The glyph stream
  * ------------------------------------------------------------------ */
 
-/** Long enough for "via env_var:REPORTS_BUC…" to still be a sentence. */
-export const GLYPH_MAX_CHARS = 22;
+/** A safety net, not the shaping mechanism — every push below already emits
+ *  a short code, not a sentence, so this only catches an unexpectedly long
+ *  resource id rather than routinely truncating mid-word. */
+export const GLYPH_MAX_CHARS = 10;
 /** ~13 glyphs per resource on the real payload; this is ~24 resources' worth. */
 export const MAX_GLYPHS = 320;
 
@@ -745,26 +793,31 @@ export function sharedNamePrefix(results: MirrorResult[]): string {
   return cut > 2 ? p.slice(0, cut + 1) : "";
 }
 
+/** Single-letter verdict codes — terminal shorthand for the same three
+ *  words the legend spells out in full. */
+const VERDICT_LETTER: Record<Verdict, string> = { BLOCKED: "B", NEEDS_REVIEW: "R", SAFE: "S" };
+const REV_LETTER: Record<string, string> = { HIGH: "H", MEDIUM: "M", LOW: "L" };
+
 /**
- * Every real string in the payload, turned into one ejected glyph.
+ * Every real field in the payload, turned into one ejected glyph — as a
+ * short code, not a sentence.
  *
- * The list below is the exhaustive enumeration of the fields `MirrorResult`
- * actually carries — resource id, verdict, risk score, the Cedar decision and
- * each policy id behind it, the reversibility level, the Mirror badge, every
- * blast-radius hop (with its real 90-day invocation count where CloudWatch
- * returned one), every adversarial error/throttle reading, every
- * decision-matrix scenario (coloured by THAT row's verdict, not the
- * resource's), every downstream effect's real `via` edge, and every rollback
- * step. There is no "filler" branch: if the scan returned nothing for a field,
- * no glyph exists for it.
+ * The founder's own words: "single letter or symbols cuz whole ahh keywords
+ * and words will eat the gpu." So every token here is compressed to the
+ * shortest honest representation of a real value — a verdict letter, a raw
+ * number, a two-letter decision, a hop:count pair — rather than the literal
+ * English string the field held. A sentence-shaped field (a Cedar reason, a
+ * decision-matrix scenario, a downstream `via` edge, a rollback step) is
+ * represented by its real ordinal (`r2`, `m1`, `v1`, `s3`) instead of its
+ * text: the glyph still points at one specific real record, it just no
+ * longer tries to be readable prose at speed. There is no "filler" branch —
+ * if the scan returned nothing for a field, no glyph exists for it.
  *
  * Glyphs off a resource Cedar refused ride the polar jets — every third one,
  * so the disk keeps its share of the refusals too.
  */
 export function buildGlyphStream(results: MirrorResult[]): GlyphToken[] {
   const out: GlyphToken[] = [];
-  const prefix = sharedNamePrefix(results);
-  const strip = (s: string) => (prefix && s.includes(prefix) ? s.replace(prefix, "") : s);
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
@@ -788,33 +841,28 @@ export function buildGlyphStream(results: MirrorResult[]): GlyphToken[] {
       k++;
     };
 
-    push(strip(r.resource));
-    push(r.verdict);
-    push(`risk ${r.risk_score}`);
-    push(r.cedar_decision);
-    if (r.reversibility?.level) push(`rev ${r.reversibility.level}`);
-    if (r.mirror_score?.badge) push(r.mirror_score.badge);
+    push(VERDICT_LETTER[r.verdict]);
+    push(String(r.risk_score));
+    // "Decision.Allow" / "Decision.Deny" -> "ALLOW" / "DENY".
+    if (r.cedar_decision) push(r.cedar_decision.split(".").pop() ?? r.cedar_decision);
+    if (r.reversibility?.level) push(REV_LETTER[r.reversibility.level] ?? r.reversibility.level);
+    if (r.mirror_score?.badge) push(r.mirror_score.badge.slice(0, 3));
 
-    for (const reason of r.cedar_reasons ?? []) push(reason);
+    (r.cedar_reasons ?? []).forEach((_reason, idx) => push(`r${idx + 1}`));
 
     for (const b of r.blast_radius ?? []) {
-      push(
-        typeof b.invocations_90d === "number"
-          ? `hop${b.hop} inv ${b.invocations_90d}`
-          : `hop${b.hop} ${strip(b.resource)}`,
-      );
+      push(typeof b.invocations_90d === "number" ? `h${b.hop}:${b.invocations_90d}` : `h${b.hop}`);
     }
 
     for (const a of r.adversarial ?? []) {
-      const parts: string[] = [];
-      if (typeof a.errors === "number") parts.push(`err ${a.errors}`);
-      if (typeof a.throttles === "number") parts.push(`thr ${a.throttles}`);
-      push(parts.length > 0 ? `hop${a.hop} ${parts.join(" ")}` : `hop${a.hop} adversarial`);
+      const e = typeof a.errors === "number" ? a.errors : 0;
+      const t = typeof a.throttles === "number" ? a.throttles : 0;
+      push(`h${a.hop}e${e}t${t}`);
     }
 
-    for (const row of r.decision_matrix ?? []) push(row.scenario, row.verdict);
-    for (const d of r.future_diff?.downstream ?? []) push(`via ${d.via}`);
-    for (const s of r.rollback_plan?.steps ?? []) push(s);
+    (r.decision_matrix ?? []).forEach((row, idx) => push(`m${idx + 1}`, row.verdict));
+    (r.future_diff?.downstream ?? []).forEach((_d, idx) => push(`v${idx + 1}`));
+    (r.rollback_plan?.steps ?? []).forEach((_s, idx) => push(`s${idx + 1}`));
   }
 
   return out;
@@ -868,6 +916,48 @@ export function buildNebula(results: MirrorResult[]): NebulaCloud[] {
       scale: 1.45 + density * 1.9,
       alpha: 0.1 + density * 0.16,
       drift: (h1 - 0.5) * 0.055,
+    });
+  }
+  return out;
+}
+
+/**
+ * The starfield sits behind the nebula and never depends on the scan — a sky
+ * is the one part of this scene that is honestly always the same sky, the
+ * way it is honestly not somehow shaped like the payload of a different AWS
+ * account. It exists purely for depth: a large deterministic scatter of
+ * pinpoints far behind the quasar, unrelated to any real record. (FNV-1a
+ * seeded on the index, not Math.random, only so the sky never re-shuffles
+ * between renders — not because there's anything real for it to encode.)
+ */
+export interface Star {
+  x: number;
+  y: number;
+  z: number;
+  size: number;
+  twinklePhase: number;
+  twinkleSpeed: number;
+}
+
+export const STAR_COUNT = 260;
+
+export function buildStarfield(count = STAR_COUNT): Star[] {
+  const out: Star[] = [];
+  const p = new THREE.Vector3();
+  for (let i = 0; i < count; i++) {
+    fibonacciPoint(i, count, p);
+    const h1 = hashUnit(`star${i}`);
+    const h2 = hashUnit(`${i}star`);
+    // Pushed well past the nebula/quasar so nothing here ever occludes real
+    // content — this is the backdrop, not a foreground element.
+    const dist = 9 + h1 * 7;
+    out.push({
+      x: p.x * dist,
+      y: p.y * dist,
+      z: p.z * dist,
+      size: 0.02 + h2 * 0.05,
+      twinklePhase: h1 * Math.PI * 2,
+      twinkleSpeed: 0.15 + h2 * 0.35,
     });
   }
   return out;
@@ -1101,12 +1191,18 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     const wide = clamp((viewport.width / viewport.height - 0.95) / 0.55, 0, 1);
     const span = Math.min(viewport.width, viewport.height);
 
-    const shell = span * lerp(0.38, 0.478, wide);
+    const shell = span * lerp(0.44, 0.58, wide);
     const horizon = shell / 3.4;
 
     return {
-      centerX: lerp(0, halfW * 0.18, wide),
-      centerY: lerp(-halfH * 0.34, -halfH * 0.02, wide),
+      // Pushed further right (0.18 -> 0.46 of the half-width) so the disk
+      // clears the headline column entirely instead of sitting under it —
+      // the founder's own screenshot showed the horizon overlapping "looks
+      // safe" / "to delete" at common desktop widths. Bigger (shell grew
+      // too) and further right reads as "the dominant right-side object,"
+      // not "the thing crowding the text."
+      centerX: lerp(0, halfW * 0.46, wide),
+      centerY: lerp(-halfH * 0.34, -halfH * 0.04, wide),
       rx: shell,
       ry: shell * lerp(0.92, 0.78, wide),
       rz: shell,
@@ -1149,6 +1245,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   const horizonGeo = useMemo(() => new THREE.SphereGeometry(1, 64, 48), []);
   const reticleGeo = useMemo(() => new THREE.RingGeometry(0.955, 1, 64), []);
   const glowTex = useMemo(() => makeGlowTexture(), []);
+  const starTex = useMemo(() => makeStarTexture(), []);
   const rimTex = useMemo(() => makeRimTexture(), []);
   const streakTex = useMemo(() => makeStreakTexture(), []);
   const lensTex = useMemo(() => makeLensTexture(), []);
@@ -1160,13 +1257,25 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       horizonGeo.dispose();
       reticleGeo.dispose();
       glowTex.dispose();
+      starTex.dispose();
       rimTex.dispose();
       streakTex.dispose();
       lensTex.dispose();
       jetTex.dispose();
       nebulaTex.forEach((t) => t.dispose());
     },
-    [sphereGeo, horizonGeo, reticleGeo, glowTex, rimTex, streakTex, lensTex, jetTex, nebulaTex],
+    [
+      sphereGeo,
+      horizonGeo,
+      reticleGeo,
+      glowTex,
+      starTex,
+      rimTex,
+      streakTex,
+      lensTex,
+      jetTex,
+      nebulaTex,
+    ],
   );
 
   /* ---------------- evidence field ---------------- */
@@ -1174,20 +1283,28 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   const motes = useMemo(() => buildEvidenceField(results), [results]);
 
   /**
-   * One interleaved buffer for the whole field: colours written once (they
-   * encode the owner's real verdict and risk and never change), positions
-   * rewritten per frame. A Points cloud is a single draw call, so the field
-   * costs one more draw no matter how much evidence the scan returned.
+   * Split into three verdict buckets rather than one flat cloud.
+   *
+   * A single uniform `PointsMaterial.size` can't vary per point, so "size
+   * by severity" (red biggest, yellow medium, green smallest — the
+   * founder's own priority order) means three small Points clouds instead
+   * of one big one: three draw calls total, still nowhere near a budget
+   * concern at MAX_MOTES=1400. Each bucket keeps the real index of every
+   * mote it holds so the per-frame position write below can still reach
+   * back into `placed[m.owner]`.
    */
-  const moteGeo = useMemo(() => {
+  const moteBuckets = useMemo(() => {
+    const buckets: Record<Verdict, EvidenceMote[]> = { BLOCKED: [], NEEDS_REVIEW: [], SAFE: [] };
+    for (const m of motes) buckets[m.verdict].push(m);
+    return buckets;
+  }, [motes]);
+
+  const makeMoteGeo = (list: EvidenceMote[]) => {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array(motes.length * 3), 3),
-    );
-    const colors = new Float32Array(motes.length * 3);
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(list.length * 3), 3));
+    const colors = new Float32Array(list.length * 3);
     const c = new THREE.Color();
-    motes.forEach((m, i) => {
+    list.forEach((m, i) => {
       // Risk is brightness, not hue: the verdict colour still has to read as
       // the verdict, so a hot SAFE node burns brighter green, never orange.
       c.set(VERDICT_COLOR[m.verdict]).multiplyScalar(0.5 + m.heat * 0.5);
@@ -1197,10 +1314,27 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     });
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     return geo;
-  }, [motes]);
-  useEffect(() => () => moteGeo.dispose(), [moteGeo]);
+  };
+
+  const blockedGeo = useMemo(() => makeMoteGeo(moteBuckets.BLOCKED), [moteBuckets]);
+  const reviewGeo = useMemo(() => makeMoteGeo(moteBuckets.NEEDS_REVIEW), [moteBuckets]);
+  const safeGeo = useMemo(() => makeMoteGeo(moteBuckets.SAFE), [moteBuckets]);
+  useEffect(
+    () => () => {
+      blockedGeo.dispose();
+      reviewGeo.dispose();
+      safeGeo.dispose();
+    },
+    [blockedGeo, reviewGeo, safeGeo],
+  );
   /** Written per frame from real scroll position — see the frame loop. */
-  const moteMatRef = useRef<THREE.PointsMaterial>(null);
+  const moteMatRefs = useRef<Record<Verdict, THREE.PointsMaterial | null>>({
+    BLOCKED: null,
+    NEEDS_REVIEW: null,
+    SAFE: null,
+  });
+  /** Red biggest, yellow medium, green smallest — real severity order. */
+  const MOTE_SIZE: Record<Verdict, number> = { BLOCKED: 0.24, NEEDS_REVIEW: 0.16, SAFE: 0.1 };
 
   /* ---------------- reactive severity ---------------- */
 
@@ -1404,6 +1538,39 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     return clouds.map((c) => new THREE.Color(VERDICT_COLOR[c.verdict]).lerp(base, 0.62));
   }, [clouds]);
 
+  /* ---------------- starfield ---------------- */
+
+  /**
+   * Purely decorative — see `buildStarfield`'s own comment. Built once (no
+   * dependency on `results`), so it costs nothing on every real re-scan.
+   * Brightness stands in for size (a soft, cool white scaled by `star.size`,
+   * since PointsMaterial has no per-vertex size): a `PointsMaterial` can't
+   * vary point size per vertex without a custom shader, and this scene
+   * already carries two custom shaders — a third for "some stars are a
+   * little bigger" is not worth the budget.
+   */
+  const stars = useMemo(() => buildStarfield(), []);
+  const starGeo = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(stars.length * 3);
+    const colors = new Float32Array(stars.length * 3);
+    const c = new THREE.Color();
+    stars.forEach((s, i) => {
+      pos[i * 3] = s.x;
+      pos[i * 3 + 1] = s.y;
+      pos[i * 3 + 2] = s.z;
+      c.set("#cfd8ff").multiplyScalar(0.4 + s.size * 9);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    });
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }, [stars]);
+  useEffect(() => () => starGeo.dispose(), [starGeo]);
+  const starMatRef = useRef<THREE.PointsMaterial>(null);
+
   const pulseCount = Math.min(layout.edges.length, MAX_PULSES);
   /** Damage propagates faster the more of the account is actually blocked. */
   const pulseRate = PULSE_RATE * (1 + severity * 0.8);
@@ -1584,32 +1751,69 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     */
     if (motes.length > 0) {
       const spread = 1 + scrolled * 1.1;
-      const motePos = moteGeo.attributes.position;
-      const marr = motePos.array as Float32Array;
-      for (let i = 0; i < motes.length; i++) {
-        const m = motes[i];
-        const c = placed[m.owner];
-        if (!c) continue;
-        const a = m.phase + (reduced ? 0 : t * m.speed);
-        const cos = Math.cos(a);
-        const sin = Math.sin(a);
-        const r =
-          m.radius *
-          place.nodeScale *
-          spread *
-          (reduced ? 1 : 1 + Math.sin(t * 0.4 + m.phase) * 0.12);
-        marr[i * 3] = c.x + (m.u.x * cos + m.v.x * sin) * r;
-        marr[i * 3 + 1] = c.y + (m.u.y * cos + m.v.y * sin) * r;
-        marr[i * 3 + 2] = c.z + (m.u.z * cos + m.v.z * sin) * r;
-      }
-      motePos.needsUpdate = true;
-      if (moteMatRef.current) moteMatRef.current.opacity = 0.9 - scrolled * 0.55;
+      const geosByVerdict: Record<Verdict, THREE.BufferGeometry> = {
+        BLOCKED: blockedGeo,
+        NEEDS_REVIEW: reviewGeo,
+        SAFE: safeGeo,
+      };
+      (Object.keys(moteBuckets) as Verdict[]).forEach((verdict) => {
+        const list = moteBuckets[verdict];
+        if (list.length === 0) return;
+        const motePos = geosByVerdict[verdict].attributes.position;
+        const marr = motePos.array as Float32Array;
+        for (let i = 0; i < list.length; i++) {
+          const m = list[i];
+          const c = placed[m.owner];
+          if (!c) continue;
+          const a = m.phase + (reduced ? 0 : t * m.speed);
+          const cos = Math.cos(a);
+          const sin = Math.sin(a);
+          const r =
+            m.radius *
+            place.nodeScale *
+            spread *
+            (reduced ? 1 : 1 + Math.sin(t * 0.4 + m.phase) * 0.12);
+          marr[i * 3] = c.x + (m.u.x * cos + m.v.x * sin) * r;
+          marr[i * 3 + 1] = c.y + (m.u.y * cos + m.v.y * sin) * r;
+          marr[i * 3 + 2] = c.z + (m.u.z * cos + m.v.z * sin) * r;
+        }
+        motePos.needsUpdate = true;
+        const mat = moteMatRefs.current[verdict];
+        if (mat) mat.opacity = 0.9 - scrolled * 0.55;
+      });
+    }
+
+    // A gentle collective shimmer — real per-star twinkle would need a
+    // custom shader for a purely decorative backdrop, which isn't worth it.
+    if (starMatRef.current) {
+      starMatRef.current.opacity = reduced ? 0.5 : 0.42 + Math.sin(t * 0.55) * 0.12;
     }
   });
 
   const horizon = place.horizon;
 
   return (
+    <>
+      {/*
+        The starfield — fixed at world origin, NOT inside the quasar's
+        hero-avoidance offset group below, so it reads as a real backdrop
+        surrounding the whole viewport rather than drifting with the disk.
+      */}
+      <points geometry={starGeo}>
+        <pointsMaterial
+          ref={starMatRef}
+          map={glowTex}
+          size={0.09}
+          sizeAttenuation
+          vertexColors
+          transparent
+          opacity={0.45}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </points>
     <group position={[place.centerX, place.centerY, 0]}>
       {/*
         The nebula. One soft cloud per scanned resource, far behind everything
@@ -1890,23 +2094,33 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
           The evidence field — one point per real record in the payload, orbiting
           the resource it was found on. This is where the scene gets its depth
           and its ambient shimmer, and not one mote of it is padding.
+
+          Rendered as three star-textured clouds (not one flat blob cloud) so
+          size itself carries real severity: BLOCKED biggest, NEEDS_REVIEW
+          medium, SAFE smallest — the priority order red > yellow > green.
         */}
-        {motes.length > 0 ? (
-          <points geometry={moteGeo}>
-            <pointsMaterial
-              ref={moteMatRef}
-              map={glowTex}
-              size={0.15 * place.nodeScale}
-              sizeAttenuation
-              vertexColors
-              transparent
-              opacity={0.9}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </points>
-        ) : null}
+        {(["BLOCKED", "NEEDS_REVIEW", "SAFE"] as const).map((verdict) => {
+          const geo = { BLOCKED: blockedGeo, NEEDS_REVIEW: reviewGeo, SAFE: safeGeo }[verdict];
+          if (moteBuckets[verdict].length === 0) return null;
+          return (
+            <points key={`motes-${verdict}`} geometry={geo}>
+              <pointsMaterial
+                ref={(mat) => {
+                  moteMatRefs.current[verdict] = mat;
+                }}
+                map={starTex}
+                size={MOTE_SIZE[verdict] * place.nodeScale}
+                sizeAttenuation
+                vertexColors
+                transparent
+                opacity={0.9}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </points>
+          );
+        })}
 
         {layout.edges.length > 0 ? (
           <lineSegments geometry={edgeGeometry}>
@@ -1941,6 +2155,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
         ))}
       </group>
     </group>
+    </>
   );
 }
 
