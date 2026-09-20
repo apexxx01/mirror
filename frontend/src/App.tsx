@@ -9,7 +9,7 @@ import { AccountSignals } from "./components/AccountSignals";
 import { VerdictTable } from "./components/VerdictTable";
 import { BedrockBanner } from "./components/BedrockBanner";
 import { KillSwitchBanner } from "./components/KillSwitchBanner";
-import { MirrorChat } from "./components/MirrorChat";
+import { ChatInvite, MirrorChat } from "./components/MirrorChat";
 import { Footer } from "./components/Footer";
 import { LoadingState } from "./components/LoadingState";
 import { ErrorState } from "./components/ErrorState";
@@ -63,6 +63,10 @@ export default function App() {
       <main>
         <Hero counts={counts} total={results.length} />
         <FeatureLegend />
+        {/* In-page doorway to MirrorChat (which itself lives in fixed chrome
+            below) — the legend teaches the signals, this offers to answer
+            questions about them from the same real payload. */}
+        <ChatInvite total={results.length} />
         <AccountSignals results={results} />
         <KillSwitchBanner results={results} />
         {data?.bedrock_summary && <BedrockBanner summary={data.bedrock_summary} />}

@@ -1,12 +1,20 @@
 import { describe, it, expect } from "vitest";
 import {
   buildEvidenceField,
+  buildGlyphStream,
   buildLayout,
+  buildNebula,
   evidenceCount,
   fibonacciPoint,
+  GLYPH_MAX_CHARS,
   hashUnit,
+  MAX_CLOUDS,
+  MAX_GLYPHS,
   MAX_MOTES,
   severityOf,
+  sharedNamePrefix,
+  shortenToken,
+  verdictShares,
 } from "./GraphBackground";
 import type { MirrorResult } from "../types";
 import { makeMirrorResult } from "../test-utils";
@@ -242,6 +250,227 @@ describe("severityOf", () => {
 
   it("is 0 rather than NaN for an empty payload", () => {
     expect(severityOf([])).toBe(0);
+  });
+});
+
+describe("verdictShares", () => {
+  it("is the real verdict mix, and the three shares total the whole scan", () => {
+    const s = verdictShares(SANDBOX);
+    expect(s.BLOCKED).toBeCloseTo(3 / 8, 6);
+    expect(s.NEEDS_REVIEW).toBeCloseTo(2 / 8, 6);
+    expect(s.SAFE).toBeCloseTo(3 / 8, 6);
+    expect(s.BLOCKED + s.NEEDS_REVIEW + s.SAFE).toBeCloseTo(1, 6);
+  });
+
+  it("gives a verdict with no resources a share of exactly zero", () => {
+    // The accretion disk's band widths are these numbers, so a zero here is
+    // the guarantee that the disk cannot paint a verdict the scan never
+    // returned.
+    const s = verdictShares([make("a"), make("b")]);
+    expect(s.BLOCKED).toBe(0);
+    expect(s.NEEDS_REVIEW).toBe(0);
+    expect(s.SAFE).toBe(1);
+  });
+
+  it("is all zeroes rather than NaN for an empty payload", () => {
+    expect(verdictShares([])).toEqual({ BLOCKED: 0, NEEDS_REVIEW: 0, SAFE: 0 });
+  });
+});
+
+/**
+ * The glyph stream is the one place this scene could most easily start lying —
+ * "stream some plausible-looking hex" is the default way to build a techy
+ * backdrop. These tests pin the opposite guarantee: every glyph on screen is a
+ * substring of something the payload actually carries.
+ */
+describe("buildGlyphStream — every glyph is a real payload string", () => {
+  const rich: MirrorResult[] = [
+    makeMirrorResult({
+      resource: "lambda:mirror-demo-report-generator",
+      node_name: "mirror-demo-report-generator",
+      verdict: "BLOCKED",
+      risk_score: 96,
+      cedar_decision: "Decision.Deny",
+      cedar_reasons: ["policy0"],
+      blast_radius: [
+        { resource: "eventbridge:mirror-demo-report-schedule", hop: 1, invocations_90d: 3 },
+        { resource: "s3:mirror-demo-archive-2023", hop: 2 },
+      ],
+      adversarial: [{ resource: "x", hop: 1, errors: 4, throttles: 0 }],
+      future_diff: {
+        resource: "lambda:mirror-demo-report-generator",
+        action: "delete",
+        self: { before: {}, after: { exists: false, note: "" } },
+        downstream: [
+          { dependent: "d", via: "env_var:REPORTS_BUCKET", before: "b", after: "a" },
+        ],
+      },
+      rollback_plan: { available: true, steps: ["restore the rule"], reason: null },
+    }),
+    makeMirrorResult({
+      resource: "s3:mirror-demo-scratch",
+      node_name: "mirror-demo-scratch",
+      verdict: "SAFE",
+    }),
+  ];
+
+  /** Every literal the payload can legitimately contribute a glyph for. */
+  const vocabulary = (results: MirrorResult[]): string[] => {
+    const out: string[] = [];
+    for (const r of results) {
+      out.push(r.resource, r.node_name, r.verdict, `risk ${r.risk_score}`, r.cedar_decision);
+      out.push(`rev ${r.reversibility.level}`, r.mirror_score.badge);
+      out.push(...r.cedar_reasons);
+      for (const b of r.blast_radius) {
+        out.push(`hop${b.hop} inv ${b.invocations_90d}`, `hop${b.hop} ${b.resource}`);
+      }
+      for (const a of r.adversarial) out.push(`hop${a.hop} err ${a.errors} thr ${a.throttles}`);
+      for (const row of r.decision_matrix) out.push(row.scenario);
+      for (const d of r.future_diff.downstream) out.push(`via ${d.via}`);
+      out.push(...r.rollback_plan.steps);
+    }
+    return out;
+  };
+
+  it("emits nothing that is not traceable to a field in the payload", () => {
+    const prefix = sharedNamePrefix(rich);
+    const allowed = new Set(
+      vocabulary(rich).flatMap((s) => [
+        shortenToken(s),
+        shortenToken(prefix ? s.split(prefix).join("") : s),
+      ]),
+    );
+    const glyphs = buildGlyphStream(rich);
+    expect(glyphs.length).toBeGreaterThan(0);
+    for (const g of glyphs) {
+      expect(allowed.has(g.text)).toBe(true);
+    }
+  });
+
+  it("emits one glyph per real record on top of the per-resource fields", () => {
+    // 7 fixed fields (resource, verdict, risk, cedar decision, reversibility,
+    // badge) — six of them — plus one per evidence record.
+    const expected = rich.reduce((n, r) => n + 6 + evidenceCount(r), 0);
+    expect(buildGlyphStream(rich)).toHaveLength(expected);
+  });
+
+  it("attributes every glyph to a real resource, verdict and risk", () => {
+    for (const g of buildGlyphStream(rich)) {
+      expect(g.owner).toBeGreaterThanOrEqual(0);
+      expect(g.owner).toBeLessThan(rich.length);
+      expect(g.heat).toBeCloseTo(rich[g.owner].risk_score / 100, 6);
+      expect(["BLOCKED", "NEEDS_REVIEW", "SAFE"]).toContain(g.verdict);
+    }
+  });
+
+  it("colours a decision-matrix glyph by that ROW's verdict, not the resource's", () => {
+    const row = makeMirrorResult({
+      resource: "r",
+      node_name: "r",
+      verdict: "BLOCKED",
+      decision_matrix: [
+        { scenario: "if zero dependents", dependents_count: 0, risk_score: 0, verdict: "SAFE" },
+      ],
+    });
+    const glyph = buildGlyphStream([row]).find((g) => g.text === "if zero dependents");
+    expect(glyph?.verdict).toBe("SAFE");
+  });
+
+  it("puts glyphs on the jet only for resources Cedar actually refused", () => {
+    for (const g of buildGlyphStream(rich)) {
+      if (g.jet) expect(rich[g.owner].verdict).toBe("BLOCKED");
+    }
+    expect(buildGlyphStream([make("a"), make("b")]).some((g) => g.jet)).toBe(false);
+  });
+
+  it("is deterministic for the same payload", () => {
+    const a = buildGlyphStream(rich);
+    const b = buildGlyphStream(rich);
+    expect(a.map((g) => [g.text, g.owner, g.jet, g.seedA, g.seedB])).toEqual(
+      b.map((g) => [g.text, g.owner, g.jet, g.seedA, g.seedB]),
+    );
+  });
+
+  it("emits nothing for an empty payload", () => {
+    expect(buildGlyphStream([])).toEqual([]);
+  });
+
+  it("caps the stream so a pathological payload cannot melt the frame budget", () => {
+    const huge = Array.from({ length: 400 }, (_, i) => make(`r${i}`));
+    expect(buildGlyphStream(huge).length).toBeLessThanOrEqual(MAX_GLYPHS);
+  });
+});
+
+describe("shortenToken", () => {
+  it("leaves a string that already fits exactly as the payload wrote it", () => {
+    expect(shortenToken("Decision.Deny")).toBe("Decision.Deny");
+  });
+
+  it("marks a truncation rather than silently cutting the string", () => {
+    const long = "via env_var:REPORTS_BUCKET_NAME_HERE";
+    const out = shortenToken(long);
+    expect(out).toHaveLength(GLYPH_MAX_CHARS);
+    expect(out.endsWith("…")).toBe(true);
+    expect(long.startsWith(out.slice(0, -1))).toBe(true);
+  });
+
+  it("collapses whitespace so a multi-line rollback step stays one glyph", () => {
+    expect(shortenToken("  restore\n  the rule ")).toBe("restore the rule");
+  });
+});
+
+describe("sharedNamePrefix", () => {
+  it("finds the deployment prefix every scanned resource really shares", () => {
+    expect(sharedNamePrefix(SANDBOX.map((r) => r))).toBe("");
+    const deployed = [
+      make("a"),
+      make("b"),
+    ].map((r, i) => ({ ...r, node_name: `mirror-demo-${i === 0 ? "scratch" : "archive"}` }));
+    expect(sharedNamePrefix(deployed)).toBe("mirror-demo-");
+  });
+
+  it("returns nothing when the names share no prefix, so full names are used", () => {
+    expect(sharedNamePrefix([make("a"), make("b")])).toBe("");
+  });
+
+  it("returns nothing for a single-resource scan — there is nothing to share", () => {
+    expect(sharedNamePrefix([make("only-one")])).toBe("");
+  });
+});
+
+describe("buildNebula", () => {
+  it("emits one cloud per scanned resource — no padding", () => {
+    const clouds = buildNebula(SANDBOX);
+    expect(clouds).toHaveLength(SANDBOX.length);
+    expect(clouds.map((c) => c.verdict)).toEqual(SANDBOX.map((r) => r.verdict));
+  });
+
+  it("sizes each cloud by how much evidence Mirror really holds on it", () => {
+    const thin = makeMirrorResult({ resource: "thin", decision_matrix: [], cedar_reasons: [] });
+    const thick = makeMirrorResult({
+      resource: "thick",
+      cedar_reasons: ["p0", "p1"],
+      blast_radius: [{ resource: "x", hop: 1, invocations_90d: 1 }],
+      rollback_plan: { available: true, steps: ["a", "b", "c"], reason: null },
+    });
+    const [a, b] = buildNebula([thin, thick]);
+    expect(evidenceCount(thin)).toBeLessThan(evidenceCount(thick));
+    expect(a.scale).toBeLessThan(b.scale);
+    expect(a.alpha).toBeLessThan(b.alpha);
+  });
+
+  it("puts every cloud behind the quasar, never in front of it", () => {
+    for (const c of buildNebula(SANDBOX)) expect(c.z).toBeLessThan(0);
+  });
+
+  it("is deterministic and emits nothing for an empty payload", () => {
+    expect(buildNebula(SANDBOX)).toEqual(buildNebula(SANDBOX));
+    expect(buildNebula([])).toEqual([]);
+  });
+
+  it("caps the cloud count on an implausibly large account", () => {
+    const huge = Array.from({ length: 400 }, (_, i) => make(`r${i}`));
+    expect(buildNebula(huge).length).toBeLessThanOrEqual(MAX_CLOUDS);
   });
 });
 

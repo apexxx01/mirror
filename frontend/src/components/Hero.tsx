@@ -381,15 +381,16 @@ export function Hero({ counts, total }: HeroProps) {
         but it can only darken what it knows about; this is the belt-and-braces
         floor under the display type itself.
 
-        It matters more than it used to. The risk core is now a half-viewport
-        object sitting at ~61% of the frame, which means the headline's longest
+        It matters more than it used to. The quasar is now a half-viewport
+        object sitting at ~59% of the frame, which means the headline's longest
         line genuinely crosses it — that collision IS the composition. So the
         scrim is shaped to the type rather than to the screen: an ellipse
         anchored off the left edge that is opaque under the claim and fully
-        gone before the artifact's lit side, plus a shallow left-to-right wash
-        that catches the standfirst. The core's own material does the other
-        half of this job — it is dark clearcoated metal, not an emissive fill,
-        precisely so 140px of white Unbounded survives crossing it.
+        gone before the accretion disk, plus a shallow left-to-right wash that
+        catches the standfirst. The object itself does the other half of this
+        job — the centre of the composition is a pure-black event horizon that
+        emits nothing, precisely so 140px of white Unbounded survives crossing
+        it.
       */}
       <div
         aria-hidden="true"
@@ -598,11 +599,12 @@ export function Hero({ counts, total }: HeroProps) {
       {/*
         The gallery placard for the object on the right.
 
-        The risk core is a real readout — its colour is the account's dominant
-        verdict, its lighting is the real verdict mix, its surface boils with
-        the real blocked share — and an unlabelled artifact is just a pretty
-        shape. This is the caption: a hairline rule, a serif gallery label, and
-        the three real counts the artifact is made of.
+        The event horizon is a real readout — the accretion disk's colour bands
+        are this account's verdict mix (the proportion bar above, revolved),
+        the glyphs streaming off it are real strings out of the payload, and
+        the jets reach as far as the account withheld — and an unlabelled
+        artifact is just a pretty shape. This is the caption: a hairline rule,
+        a serif gallery label, and the three real counts it is made of.
 
         Only from 1280px. At 1024 the rail (max-w-3xl) and the chat FAB between
         them leave no genuinely empty right column, and below that it would
@@ -614,9 +616,9 @@ export function Hero({ counts, total }: HeroProps) {
         {...rise(BEAT.meter + 0.3)}
         className="mirror-hero-sink mirror-hero-legible pointer-events-none absolute bottom-24 right-12 hidden w-52 border-t border-[var(--line)] pt-3 text-right xl:block"
       >
-        <div className="mirror-eyebrow text-[13px] text-gold">the risk core</div>
+        <div className="mirror-eyebrow text-[13px] text-gold">the event horizon</div>
         <div className="mt-2 font-mono text-[9px] uppercase leading-relaxed tracking-[0.22em] text-smoke/55">
-          lit by the real verdict mix
+          disk banded by the real verdict mix
         </div>
         <div className="mt-3 flex items-center justify-end gap-3 font-mono text-[10px] tabular-nums tracking-[0.18em]">
           <span className="flex items-center gap-1.5 text-blocked">
