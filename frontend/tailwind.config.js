@@ -6,6 +6,7 @@ export default {
       fontFamily: {
         display: ["Unbounded", "sans-serif"],
         mono: ["Space Mono", "monospace"],
+        serif: ["Fraunces", "serif"],
       },
       colors: {
         hazard: "#FF1E1E",
@@ -13,10 +14,19 @@ export default {
         review: "#EAB308",
         safe: "#16A34A",
         void: "#0A0A0A",
+        carbon: "#050505",
         ink: "#f2f2ee",
+        smoke: "#9c9c9c",
+        graphite: "#212121",
+        iron: "#3a3a3a",
+        gold: "#C9A876",
       },
       backdropBlur: {
         glass: "20px",
+      },
+      letterSpacing: {
+        crush: "-0.06em",
+        supercrush: "-0.08em",
       },
     },
   },
