@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { buildLayout, fibonacciPoint, hashUnit } from "./GraphBackground";
+import {
+  buildEvidenceField,
+  buildLayout,
+  evidenceCount,
+  fibonacciPoint,
+  hashUnit,
+  MAX_MOTES,
+  severityOf,
+} from "./GraphBackground";
 import type { MirrorResult } from "../types";
 import { makeMirrorResult } from "../test-utils";
 import * as THREE from "three";
@@ -138,6 +146,102 @@ describe("hashUnit", () => {
 
   it("separates names that differ only slightly", () => {
     expect(hashUnit("mirror-demo-scratch")).not.toBe(hashUnit("mirror-demo-scratci"));
+  });
+});
+
+/**
+ * The ambient particle field is the one place a background like this usually
+ * cheats — "add 2000 stars" — so the same guarantee `buildLayout` carries for
+ * nodes and edges is pinned down here for motes: one mote per real evidence
+ * record, and no other source of motes exists.
+ */
+describe("evidenceCount — motes are real records only", () => {
+  it("counts every evidence array the payload actually carries", () => {
+    const r = makeMirrorResult({
+      cedar_reasons: ["p1", "p2"],
+      blast_radius: [{ resource: "x", hop: 1, invocations_90d: 3 }],
+      adversarial: [{ resource: "x", hop: 1, errors: 2, throttles: 0 }],
+      future_diff: {
+        resource: "a",
+        action: "delete",
+        self: { before: {}, after: { exists: false, note: "" } },
+        downstream: [{ dependent: "x", via: "y", before: "b", after: "a" }],
+      },
+      rollback_plan: { available: true, steps: ["s1", "s2", "s3"], reason: null },
+    });
+    // 2 reasons + 1 hop + 1 adversarial + 4 matrix rows + 1 downstream + 3 steps
+    expect(evidenceCount(r)).toBe(12);
+  });
+
+  it("is zero when a resource carries no evidence at all", () => {
+    const bare = makeMirrorResult({
+      cedar_reasons: [],
+      decision_matrix: [],
+      rollback_plan: { available: false, steps: [], reason: null },
+    });
+    expect(evidenceCount(bare)).toBe(0);
+  });
+});
+
+describe("buildEvidenceField", () => {
+  it("emits exactly the payload's total evidence count — no padding", () => {
+    const motes = buildEvidenceField(SANDBOX);
+    const expected = SANDBOX.reduce((n, r) => n + evidenceCount(r), 0);
+    expect(motes).toHaveLength(expected);
+    expect(expected).toBeGreaterThan(0);
+  });
+
+  it("attributes every mote to a real node index, verdict and risk", () => {
+    const motes = buildEvidenceField(SANDBOX);
+    for (const m of motes) {
+      expect(m.owner).toBeGreaterThanOrEqual(0);
+      expect(m.owner).toBeLessThan(SANDBOX.length);
+      expect(m.verdict).toBe(SANDBOX[m.owner].verdict);
+      expect(m.heat).toBeCloseTo(SANDBOX[m.owner].risk_score / 100, 6);
+    }
+  });
+
+  it("gives every mote an orthonormal orbit basis so orbits stay circular", () => {
+    for (const m of buildEvidenceField(SANDBOX)) {
+      expect(m.u.length()).toBeCloseTo(1, 6);
+      expect(m.v.length()).toBeCloseTo(1, 6);
+      expect(m.u.dot(m.v)).toBeCloseTo(0, 6);
+      expect(Number.isFinite(m.radius) && m.radius > 0).toBe(true);
+    }
+  });
+
+  it("is deterministic for the same payload", () => {
+    const a = buildEvidenceField(SANDBOX);
+    const b = buildEvidenceField(SANDBOX);
+    expect(a.map((m) => [m.owner, m.radius, m.phase, m.speed])).toEqual(
+      b.map((m) => [m.owner, m.radius, m.phase, m.speed]),
+    );
+  });
+
+  it("emits nothing for an empty payload", () => {
+    expect(buildEvidenceField([])).toEqual([]);
+  });
+
+  it("caps the field so a pathological payload cannot melt the frame budget", () => {
+    const huge = Array.from({ length: 400 }, (_, i) =>
+      make(`r${i}`, [], "SAFE", 0),
+    );
+    expect(buildEvidenceField(huge).length).toBeLessThanOrEqual(MAX_MOTES);
+  });
+});
+
+describe("severityOf", () => {
+  it("is the real share of resources Cedar blocked", () => {
+    expect(severityOf(SANDBOX)).toBeCloseTo(3 / 8, 6);
+  });
+
+  it("is 0 for a clean account and 1 when everything is blocked", () => {
+    expect(severityOf([make("a"), make("b")])).toBe(0);
+    expect(severityOf([make("a", [], "BLOCKED"), make("b", [], "BLOCKED")])).toBe(1);
+  });
+
+  it("is 0 rather than NaN for an empty payload", () => {
+    expect(severityOf([])).toBe(0);
   });
 });
 

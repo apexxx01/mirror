@@ -1,7 +1,104 @@
-import type { MirrorResult } from "../types";
+import { useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
+import type { MirrorResult, Verdict } from "../types";
 
 interface AccountSignalsProps {
   results: MirrorResult[];
+}
+
+const VERDICT_DOT: Record<Verdict, string> = {
+  BLOCKED: "bg-blocked",
+  NEEDS_REVIEW: "bg-review",
+  SAFE: "bg-safe",
+};
+
+/**
+ * Counts up to the REAL value and stops there. The animation is theatre; the
+ * destination is data. Reduced-motion visitors get the number immediately,
+ * and so does any environment without rAF.
+ */
+function useCountUp(target: number, durationMs = 1100): number {
+  const reduced = useReducedMotion();
+  // No rAF (or reduced motion) means the real figure renders immediately —
+  // derived during render, never written from an effect.
+  const animates = !reduced && typeof requestAnimationFrame === "function";
+  const [value, setValue] = useState(0);
+  const frame = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!animates) return;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      // Decelerating quint — lands softly on the real figure.
+      const eased = 1 - Math.pow(1 - t, 5);
+      setValue(Math.round(target * eased));
+      if (t < 1) frame.current = requestAnimationFrame(tick);
+    };
+    frame.current = requestAnimationFrame(tick);
+    return () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    };
+  }, [target, durationMs, animates]);
+
+  return animates ? value : target;
+}
+
+interface SignalTileProps {
+  index: number;
+  value: number;
+  label: string;
+  note: string;
+  /** Real 0–1 share, only where a real denominator exists. */
+  ratio?: number;
+  accent?: "ink" | "hazard";
+}
+
+function SignalTile({ index, value, label, note, ratio, accent = "ink" }: SignalTileProps) {
+  const shown = useCountUp(value, 900 + index * 90);
+
+  return (
+    <div className="mirror-panel-hover group relative border-b border-r border-white/10 px-5 py-6 sm:px-6 sm:py-7">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="font-mono text-[10px] tracking-[0.3em] text-white/25">
+          {String(index + 1).padStart(2, "0")}
+        </span>
+        {ratio !== undefined && (
+          <span className="font-mono text-[10px] tabular-nums tracking-[0.2em] text-white/30">
+            {Math.round(ratio * 100)}%
+          </span>
+        )}
+      </div>
+
+      <div
+        className={`mt-4 font-mono font-bold tabular-nums leading-[0.85] tracking-crush ${
+          accent === "hazard" ? "text-hazard" : "text-ink"
+        }`}
+        style={{ fontSize: "clamp(2.25rem, 6vw, 3.5rem)" }}
+      >
+        {shown.toLocaleString("en-US")}
+      </div>
+
+      {/* Meter only where the denominator is real — never a decorative bar. */}
+      {ratio !== undefined && (
+        <div className="mt-4 h-px w-full bg-white/10">
+          <div
+            className={`h-px ${accent === "hazard" ? "bg-hazard" : "bg-ink"} transition-[width] duration-700 ease-out`}
+            style={{ width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }}
+          />
+        </div>
+      )}
+
+      <div
+        className={`font-mono text-[10px] uppercase leading-relaxed tracking-[0.2em] text-white/55 ${
+          ratio !== undefined ? "mt-3" : "mt-4"
+        }`}
+      >
+        {label}
+      </div>
+      <div className="mt-1.5 font-mono text-[10px] leading-relaxed text-white/30">{note}</div>
+    </div>
+  );
 }
 
 /**
@@ -11,6 +108,8 @@ interface AccountSignalsProps {
  * scan already produced at the whole-account level.
  */
 export function AccountSignals({ results }: AccountSignalsProps) {
+  const total = results.length;
+
   const totalDependents = results.reduce((n, r) => n + r.dependents.length, 0);
   const totalInvocations = results.reduce(
     (n, r) => n + r.blast_radius.reduce((m, e) => m + (e.invocations_90d ?? 0), 0),
@@ -23,36 +122,127 @@ export function AccountSignals({ results }: AccountSignalsProps) {
   const lowReversibility = results.filter((r) => r.reversibility.level === "LOW").length;
   const hasRollback = results.filter((r) => r.rollback_plan.available).length;
   const avgScore =
-    results.length === 0
+    total === 0
       ? 0
-      : Math.round(results.reduce((n, r) => n + r.mirror_score.score, 0) / results.length);
+      : Math.round(results.reduce((n, r) => n + r.mirror_score.score, 0) / total);
 
-  const items = [
-    { label: "real dependency edges", value: totalDependents },
-    { label: "real Lambda invocations (90d)", value: totalInvocations },
-    { label: "real historical errors (90d)", value: totalErrors },
-    { label: "resources with LOW reversibility", value: lowReversibility },
-    { label: "resources with a real rollback path", value: hasRollback },
-    { label: "average mirror score", value: avgScore },
+  // Secondary facts — also real, also derived from the same payload.
+  const withDependents = results.filter((r) => r.dependents.length > 0).length;
+  const blastHops = results.reduce((n, r) => n + r.blast_radius.length, 0);
+  const unstable = results.filter((r) =>
+    r.adversarial.some((e) => (e.errors ?? 0) > 0 || (e.throttles ?? 0) > 0)
+  ).length;
+
+  const share = (n: number) => (total === 0 ? 0 : n / total);
+
+  const items: Array<Omit<SignalTileProps, "index">> = [
+    {
+      value: totalDependents,
+      label: "real dependency edges",
+      note: `${withDependents} of ${total} resources carry at least one`,
+    },
+    {
+      value: totalInvocations,
+      label: "real Lambda invocations (90d)",
+      note: `observed across ${blastHops} blast-radius hops`,
+    },
+    {
+      value: totalErrors,
+      label: "real historical errors (90d)",
+      note: `${unstable} resources show real instability`,
+      accent: totalErrors > 0 ? "hazard" : "ink",
+    },
+    {
+      value: lowReversibility,
+      label: "resources with LOW reversibility",
+      note: "no real AWS recovery mechanism configured",
+      ratio: share(lowReversibility),
+      accent: lowReversibility > 0 ? "hazard" : "ink",
+    },
+    {
+      value: hasRollback,
+      label: "resources with a real rollback path",
+      note: "a published, executable recovery plan exists",
+      ratio: share(hasRollback),
+    },
+    {
+      value: avgScore,
+      label: "average mirror score",
+      note: "composite of verdict, activity risk and recovery",
+      ratio: avgScore / 100,
+    },
   ];
 
   return (
-    <section className="relative z-10 mx-auto max-w-4xl px-6 pt-4">
-      <div className="mirror-glass px-6 py-5">
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-widest text-white/40">
-          account-wide real signals
-        </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-          {items.map((item) => (
-            <div key={item.label}>
-              <div className="font-mono text-xl font-bold text-white/90">{item.value}</div>
-              <div className="font-mono text-[10px] uppercase tracking-widest text-white/40">
-                {item.label}
-              </div>
+    <section
+      id="signals"
+      aria-labelledby="signals-title"
+      className="relative z-10 mx-auto mt-20 max-w-6xl px-6 sm:mt-28"
+    >
+      <header className="border-t border-white/15 pt-5">
+        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-[10px] tracking-[0.35em] text-smoke">02</span>
+              <span className="mirror-eyebrow text-base text-gold">the account</span>
             </div>
-          ))}
+            <h2
+              id="signals-title"
+              className="mt-3 font-mono text-2xl font-bold uppercase leading-[1.05] tracking-crush text-ink sm:text-[2.5rem]"
+            >
+              Account-wide real signals
+            </h2>
+          </div>
+          <p className="max-w-sm font-mono text-xs leading-relaxed text-smoke">
+            Six aggregates, recomputed from the {total} scanned {total === 1 ? "resource" : "resources"} on
+            this page. Nothing cached, nothing rounded up, nothing invented.
+          </p>
         </div>
+      </header>
+
+      <div className="mt-8 grid grid-cols-1 border-l border-t border-white/10 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((item, i) => (
+          <SignalTile key={item.label} index={i} {...item} />
+        ))}
       </div>
+
+      {/*
+        The live strip: every real resource name the scan touched, ticking
+        past with its real verdict color. Decorative repetition of data the
+        table states properly, so it is hidden from assistive tech — and the
+        marquee keyframe itself is disabled under prefers-reduced-motion.
+      */}
+      {results.length > 0 && (
+        <div
+          aria-hidden="true"
+          className="relative mt-px overflow-hidden border-b border-l border-r border-white/10 bg-carbon py-3"
+        >
+          <div className="mirror-marquee-track">
+            {[0, 1].map((copy) => (
+              <div key={copy} className="flex shrink-0 items-center">
+                {results.map((r) => (
+                  <span
+                    key={`${copy}-${r.resource}`}
+                    className="flex items-center gap-2 whitespace-nowrap px-5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/35"
+                  >
+                    <span className={`h-1 w-1 shrink-0 ${VERDICT_DOT[r.verdict]}`} />
+                    {/*
+                      The trailing separator lives inside this text node on
+                      purpose: it keeps the ticker from shadowing the table as
+                      an exact text match, so `getByText("<resource>")` still
+                      resolves to the real row below rather than to decoration.
+                    */}
+                    {`${r.resource} ·`}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+          {/* Hard edge-fades so names enter and leave the strip, not the page. */}
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-carbon to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-carbon to-transparent" />
+        </div>
+      )}
     </section>
   );
 }
