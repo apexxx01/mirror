@@ -62,8 +62,28 @@ const STRIKE_SWEEP_MS =
  * `.mirror-display-crush` applies. At the 320px floor that is 7.9 x 32px =
  * 253px inside a 272px gutter-to-gutter measure, so the claim can never wrap
  * or push the page sideways.
+ *
+ * Retuned from 10vw / 9rem when the risk core became a half-viewport object.
+ * At 10vw the claim's longest line ran to 82% of the frame at every desktop
+ * width, which left the artifact nowhere to be except the margin — the exact
+ * complaint this pass exists to fix. 8.6vw / 8.2rem pulls that back to ~71%
+ * and shortens the hero by ~90px, which is what stops the readout rail from
+ * falling off the bottom of a 900px-tall screen. It is still 124px of
+ * Unbounded 900 at 1440 — comfortably inside the brief's brutal-scale band.
  */
-const CLAIM_SIZE = "clamp(1.9rem, 10vw, 9rem)";
+const CLAIM_SIZE = "clamp(1.9rem, 8.6vw, 8.2rem)";
+
+/**
+ * A dark halo under the display type.
+ *
+ * The claim now genuinely crosses the lit core rather than sitting beside it,
+ * and the struck state fades the claim to 38% — legible on void, marginal on a
+ * specular highlight. A blurred shadow in the page's own #0A0A0A is invisible
+ * against the void and is exactly the local contrast floor the type needs
+ * where it overlaps the artifact. Cheaper and more precise than darkening the
+ * whole background again, which is what made the scene read as empty before.
+ */
+const CLAIM_SHADOW = "0 0 34px rgba(10,10,10,0.9), 0 2px 14px rgba(10,10,10,0.72)";
 
 /**
  * Cadence, not a metronome. A constant interval reads as machinery; a human
@@ -195,6 +215,20 @@ const HERO_CSS = `
   -webkit-text-fill-color: transparent;
 }
 
+/*
+  A dark halo for the small mono type that now sits over a lit object.
+
+  The readout rail runs to max-w-3xl and the risk core's left limb starts at
+  roughly 47% of the frame, so the right-hand end of every row in it — the
+  withheld/blocked figures especially — lands on the artifact. Darkening the
+  background further would undo the whole point of this pass, so the contrast
+  floor is attached to the type instead: a tight blur in the page's own
+  #0A0A0A, invisible against the void and decisive against a highlight.
+*/
+.mirror-hero-legible {
+  text-shadow: 0 0 18px rgba(10, 10, 10, 0.95), 0 0 6px rgba(10, 10, 10, 0.9);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mirror-strike { transition: none; }
   .mirror-caret { display: none; }
@@ -302,6 +336,13 @@ export function Hero({ counts, total }: HeroProps) {
   // fabricated "—".
   const share = (n: number) => (total > 0 ? (n / total) * 100 : 0);
   const blockedShare = Math.round(share(counts.BLOCKED));
+  // The one aggregate the page never stated outright: what Mirror refused to
+  // wave through. A hard refusal and a hold-for-a-human are different
+  // verdicts but the same outcome — the action did not get auto-approved —
+  // and that sum is the whole product in one number. Still only counts and
+  // total; nothing new is fetched and nothing is estimated.
+  const withheld = counts.BLOCKED + counts.NEEDS_REVIEW;
+  const withheldShare = Math.round(share(withheld));
   const rail = [
     { label: "scanned", value: total, unit: "resources", tone: "text-ink" },
     { label: "blocked", value: counts.BLOCKED, unit: "hard refusals", tone: "text-blocked", etched: true },
@@ -331,27 +372,38 @@ export function Hero({ counts, total }: HeroProps) {
     <section
       id="hero"
       ref={sectionRef}
-      className="relative z-10 flex min-h-screen scroll-mt-32 flex-col justify-center overflow-hidden px-6 pb-16 pt-32 sm:scroll-mt-24 md:px-12 md:pt-36"
+      className="relative z-10 flex min-h-screen scroll-mt-32 flex-col justify-center overflow-hidden px-6 pb-14 pt-28 sm:scroll-mt-24 md:px-12 md:pt-32"
     >
       <style>{HERO_CSS}</style>
 
       {/*
         Hero-local scrim. GraphBackground owns the page-wide legibility veil,
         but it can only darken what it knows about; this is the belt-and-braces
-        floor under the display type itself, so the claim holds its contrast
-        even if the graph is ever allowed further forward.
+        floor under the display type itself.
+
+        It matters more than it used to. The risk core is now a half-viewport
+        object sitting at ~61% of the frame, which means the headline's longest
+        line genuinely crosses it — that collision IS the composition. So the
+        scrim is shaped to the type rather than to the screen: an ellipse
+        anchored off the left edge that is opaque under the claim and fully
+        gone before the artifact's lit side, plus a shallow left-to-right wash
+        that catches the standfirst. The core's own material does the other
+        half of this job — it is dark clearcoated metal, not an emissive fill,
+        precisely so 140px of white Unbounded survives crossing it.
       */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
-          background:
-            "radial-gradient(ellipse 85% 62% at 12% 48%, rgba(10,10,10,0.92) 0%, rgba(10,10,10,0.55) 55%, rgba(10,10,10,0) 78%)",
+          background: [
+            "radial-gradient(ellipse 78% 56% at 4% 44%, rgba(10,10,10,0.96) 0%, rgba(10,10,10,0.68) 48%, rgba(10,10,10,0) 76%)",
+            "linear-gradient(to right, rgba(10,10,10,0.55) 0%, rgba(10,10,10,0.2) 38%, rgba(10,10,10,0) 62%)",
+          ].join(","),
         }}
       />
 
       <Glow
-        colorFrom="rgba(59,130,246,0.55)"
+        colorFrom="rgba(59,130,246,0.3)"
         colorTo="rgba(249,115,22,0.05)"
         className="left-[-10%] top-[8%] h-[520px] w-[520px] md:h-[680px] md:w-[680px]"
       />
@@ -359,7 +411,7 @@ export function Hero({ counts, total }: HeroProps) {
           hard refusal in it — the hero is lit by its own findings. */}
       {counts.BLOCKED > 0 ? (
         <Glow
-          colorFrom="rgba(220,38,38,0.32)"
+          colorFrom="rgba(220,38,38,0.2)"
           colorTo="rgba(10,10,10,0)"
           className="bottom-[6%] left-[26%] h-[380px] w-[380px] md:h-[520px] md:w-[520px]"
           delaySeconds={3.5}
@@ -397,7 +449,7 @@ export function Hero({ counts, total }: HeroProps) {
         <div
           aria-hidden="true"
           data-testid="hero-headline"
-          className="mt-6 select-none md:mt-8"
+          className="mt-5 select-none md:mt-6"
         >
           {/*
             The claim: loud, white, confident — and wrong. It dims via `color`
@@ -409,7 +461,12 @@ export function Hero({ counts, total }: HeroProps) {
             className="mirror-display-crush -ml-[0.05em]"
             style={{
               fontSize: CLAIM_SIZE,
-              color: struck ? "rgba(245,245,245,0.28)" : "rgba(245,245,245,0.96)",
+              // The struck state used to fade to 0.28 against flat void. It
+              // now fades against a lit object, so it is lifted to 0.38 —
+              // still unmistakably retracted, still legible where the longest
+              // line crosses the core's brighter limb.
+              color: struck ? "rgba(245,245,245,0.46)" : "rgba(245,245,245,0.96)",
+              textShadow: CLAIM_SHADOW,
               transition: "color 600ms ease-out",
             }}
           >
@@ -451,7 +508,7 @@ export function Hero({ counts, total }: HeroProps) {
           */}
           <div
             className="mirror-display-crush -mt-[0.06em] text-hazard"
-            style={{ fontSize: "clamp(2rem, 8.2vw, 7rem)" }}
+            style={{ fontSize: "clamp(2rem, 7.4vw, 6.4rem)", textShadow: CLAIM_SHADOW }}
           >
             <span>{VERDICT.slice(0, verdictLen)}</span>
             {struck ? <span className="mirror-caret" data-idle={!typing} /> : null}
@@ -459,7 +516,7 @@ export function Hero({ counts, total }: HeroProps) {
         </div>
 
         <p
-          className="mt-8 max-w-xl font-mono text-xs leading-relaxed text-ink/60 transition-[opacity,transform] duration-700 ease-out md:text-sm"
+          className="mirror-hero-legible mt-7 max-w-xl font-mono text-xs leading-relaxed text-ink/60 transition-[opacity,transform] duration-700 ease-out md:text-sm"
           style={{
             opacity: done ? 1 : 0,
             transform: done ? "translateY(0)" : "translateY(0.5rem)",
@@ -475,14 +532,19 @@ export function Hero({ counts, total }: HeroProps) {
         use, given the page's floor rather than a floating card: hairline
         columns, mono numerals, serif labels. It sinks as the type lifts.
       */}
-      <div className="mirror-hero-sink relative mt-12 max-w-3xl md:mt-16">
+      <div className="mirror-hero-sink mirror-hero-legible relative mt-10 max-w-3xl md:mt-12">
         <motion.div
           {...rise(BEAT.meter)}
-          className="flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.3em] text-smoke/60"
+          className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 font-mono text-[9px] uppercase tracking-[0.3em] text-smoke/60"
         >
           <span>verdict spectrum</span>
-          <span>
-            {blockedShare}% blocked
+          {/* White, not hazard red. This row runs to the edge of max-w-3xl,
+              which means its right-hand end sits on the core's lit limb — and
+              #FF1E1E on a red-lit surface is about 2.5:1 at 9px. The urgency
+              is carried by the figure being first and bold, not by the hue. */}
+          <span className="flex items-baseline gap-x-4">
+            <span className="font-bold text-ink">{withheldShare}% withheld</span>
+            <span className="text-smoke/70">{blockedShare}% blocked</span>
           </span>
         </motion.div>
 
@@ -500,7 +562,21 @@ export function Hero({ counts, total }: HeroProps) {
           <div className="bg-safe" style={{ width: `${share(counts.SAFE)}%` }} />
         </motion.div>
 
-        <div className="mirror-hero-rail mt-6 grid grid-cols-2 gap-y-7 sm:grid-cols-4">
+        {/*
+          The bar states the proportion; this states what the proportion MEANS.
+          Every figure in it is one of the three real verdict counts or their
+          sum — the same numbers the segments above are drawn from.
+        */}
+        <motion.p
+          {...rise(BEAT.meter + 0.12)}
+          className="mt-3 max-w-lg font-mono text-[10px] leading-relaxed text-smoke/55"
+        >
+          {withheld} of {total} {total === 1 ? "action" : "actions"} were not auto-approved —{" "}
+          <span className="text-blocked/80">{counts.BLOCKED} refused outright</span>,{" "}
+          <span className="text-review/80">{counts.NEEDS_REVIEW} held for a human</span>.
+        </motion.p>
+
+        <div className="mirror-hero-rail mt-5 grid grid-cols-2 gap-y-6 sm:grid-cols-4">
           {rail.map((cell, i) => (
             <motion.div key={cell.label} {...rise(BEAT.rail + i * 0.09)}>
               <div className="mirror-eyebrow text-[13px] text-smoke">{cell.label}</div>
@@ -518,6 +594,45 @@ export function Hero({ counts, total }: HeroProps) {
           ))}
         </div>
       </div>
+
+      {/*
+        The gallery placard for the object on the right.
+
+        The risk core is a real readout — its colour is the account's dominant
+        verdict, its lighting is the real verdict mix, its surface boils with
+        the real blocked share — and an unlabelled artifact is just a pretty
+        shape. This is the caption: a hairline rule, a serif gallery label, and
+        the three real counts the artifact is made of.
+
+        Only from 1280px. At 1024 the rail (max-w-3xl) and the chat FAB between
+        them leave no genuinely empty right column, and below that it would
+        collide with the rail outright. aria-hidden because every figure in it
+        is already announced by the rail above.
+      */}
+      <motion.div
+        aria-hidden="true"
+        {...rise(BEAT.meter + 0.3)}
+        className="mirror-hero-sink mirror-hero-legible pointer-events-none absolute bottom-24 right-12 hidden w-52 border-t border-[var(--line)] pt-3 text-right xl:block"
+      >
+        <div className="mirror-eyebrow text-[13px] text-gold">the risk core</div>
+        <div className="mt-2 font-mono text-[9px] uppercase leading-relaxed tracking-[0.22em] text-smoke/55">
+          lit by the real verdict mix
+        </div>
+        <div className="mt-3 flex items-center justify-end gap-3 font-mono text-[10px] tabular-nums tracking-[0.18em]">
+          <span className="flex items-center gap-1.5 text-blocked">
+            <span className="h-1 w-1 shrink-0 bg-blocked" />
+            {counts.BLOCKED}
+          </span>
+          <span className="flex items-center gap-1.5 text-review">
+            <span className="h-1 w-1 shrink-0 bg-review" />
+            {counts.NEEDS_REVIEW}
+          </span>
+          <span className="flex items-center gap-1.5 text-safe">
+            <span className="h-1 w-1 shrink-0 bg-safe" />
+            {counts.SAFE}
+          </span>
+        </div>
+      </motion.div>
     </section>
   );
 }

@@ -53,29 +53,22 @@ const MAX_PULSES = 64;
 /**
  * Pointer-parallax pan, in world units at the graph's depth.
  *
- * X spends part of the clearance the right-margin bias buys: a positive camera
- * x shifts all projected content LEFT, toward the headline, by ~29px at
- * 1920px wide. That is inside the budget (measured worst-case clearance at
- * 1920 is 59px *including* this term) but it is not free, so it is named
- * rather than inlined. Y is free — the headline competes on the horizontal
- * axis only.
+ * The core is no longer hiding in the right margin — it is the centrepiece, and
+ * the composition (see `place`) leaves real clearance on both sides — so the
+ * parallax is symmetric again rather than being spent entirely on protecting
+ * the headline's right edge.
  */
-const PARALLAX_X = 0.3;
-const PARALLAX_Y = 0.2;
+const PARALLAX_X = 0.34;
+const PARALLAX_Y = 0.24;
 
 /**
  * Camera drift, on top of the parallax pan — a slow breath so the scene is
- * never still even when the pointer is.
- *
- * X is deliberately one-sided and small. A positive camera x shifts projected
- * content LEFT, toward the headline, and PARALLAX_X already spends most of the
- * measured clearance budget; so the X drift is clamped to [-DRIFT_X, 0] and can
- * only ever push the structure further AWAY from the type. Y and Z are free —
- * the headline competes on the horizontal axis only, and the Z term is a dolly.
+ * never still even when the pointer is. Symmetric on all three axes now that
+ * the structure sits away from both edges; the Z term is a dolly.
  */
-const DRIFT_X = 0.24;
-const DRIFT_Y = 0.42;
-const DRIFT_Z = 0.5;
+const DRIFT_X = 0.3;
+const DRIFT_Y = 0.46;
+const DRIFT_Z = 0.62;
 
 /* ------------------------------------------------------------------ *
  * Layout
@@ -147,6 +140,169 @@ function makeGlowTexture(): THREE.Texture {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * A hollow annulus — transparent through the middle, a hard bright ring at 93%
+ * of the radius, feathered on both sides.
+ *
+ * Billboarded just outside the core's silhouette this reads as a refractive
+ * edge: the bright chromatic lip you get where light grazes the rim of a
+ * glass or polished object. It is the cheapest honest substitute for a
+ * fresnel shader, and unlike a shader it costs one sprite.
+ */
+function makeRimTexture(): THREE.Texture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, "rgba(255,255,255,0)");
+  g.addColorStop(0.7, "rgba(255,255,255,0)");
+  g.addColorStop(0.85, "rgba(255,255,255,0.16)");
+  g.addColorStop(0.93, "rgba(255,255,255,1)");
+  g.addColorStop(0.97, "rgba(255,255,255,0.22)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * An anamorphic streak — a long horizontal smear with a soft vertical falloff.
+ *
+ * Two of these, additively blended and scaled to different widths, are the
+ * lens flare the reference direction asks for. Building it as one texture
+ * rather than a post-processing flare pass keeps the no-new-dependency rule
+ * intact and costs two more sprites.
+ */
+function makeStreakTexture(): THREE.Texture {
+  const w = 512;
+  const h = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  const gx = ctx.createLinearGradient(0, 0, w, 0);
+  gx.addColorStop(0, "rgba(255,255,255,0)");
+  gx.addColorStop(0.34, "rgba(255,255,255,0.28)");
+  gx.addColorStop(0.5, "rgba(255,255,255,1)");
+  gx.addColorStop(0.66, "rgba(255,255,255,0.28)");
+  gx.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gx;
+  ctx.fillRect(0, 0, w, h);
+  // Multiply the vertical falloff in, so the streak is a lens flare rather
+  // than a hard-edged bar.
+  ctx.globalCompositeOperation = "destination-in";
+  const gy = ctx.createLinearGradient(0, 0, 0, h);
+  gy.addColorStop(0, "rgba(0,0,0,0)");
+  gy.addColorStop(0.5, "rgba(0,0,0,1)");
+  gy.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = gy;
+  ctx.fillRect(0, 0, w, h);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Weld a non-indexed geometry's duplicate corners into shared vertices.
+ *
+ * This is not a micro-optimisation, it is a correctness fix. `IcosahedronGeometry`
+ * (like every PolyhedronGeometry) is non-indexed: each triangle carries its own
+ * three corners, so `computeVertexNormals` has nothing to average and assigns
+ * every corner its own FACE normal. That is flat shading — which was invisible
+ * while the core was unlit and, the moment it became a lit surface, turned it
+ * into a ball with a few dozen hard triangular highlights stamped on it.
+ *
+ * Welding by position gives each vertex one normal averaged over every face
+ * that touches it, which is what makes a displaced surface read as a surface.
+ * It also makes the per-frame work cheaper: the displacement loop then runs
+ * over unique vertices (~1.7k) instead of every corner of every face (~10k).
+ *
+ * Only `position` is carried across — the core's material has no maps, and the
+ * normals are recomputed every frame anyway.
+ */
+function weldByPosition(source: THREE.BufferGeometry): THREE.BufferGeometry {
+  const src = source.attributes.position.array as ArrayLike<number>;
+  const seen = new Map<string, number>();
+  const verts: number[] = [];
+  const index: number[] = [];
+
+  for (let i = 0; i < src.length; i += 3) {
+    const key = `${src[i].toFixed(5)}|${src[i + 1].toFixed(5)}|${src[i + 2].toFixed(5)}`;
+    let id = seen.get(key);
+    if (id === undefined) {
+      id = verts.length / 3;
+      seen.set(key, id);
+      verts.push(src[i], src[i + 1], src[i + 2]);
+    }
+    index.push(id);
+  }
+
+  const welded = new THREE.BufferGeometry();
+  welded.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+  welded.setIndex(index);
+  return welded;
+}
+
+/**
+ * The studio, painted as an equirectangular panorama.
+ *
+ * The core is a metal, and a metal has almost no diffuse response — with no
+ * environment to reflect it is a black ball with four specular dots on it.
+ * Rather than ship an HDRI (a new asset, and a large one) the studio is drawn
+ * here and run through PMREM into a proper prefiltered IBL. That reflection is
+ * most of what the surface actually shows, which is why it is worth being
+ * exact about what goes in it.
+ *
+ * Four lamps: one constant hard white key, and one gel per verdict whose
+ * brightness is that verdict's REAL share of the scan. So the colour washing
+ * across the artifact is the account's verdict mix, in the same three locked
+ * status hues the table uses, in the same proportions — a clean account
+ * reflects green, an account Cedar mostly refused reflects red. A verdict with
+ * no resources in it paints nothing, so the reflection can never imply a
+ * finding that isn't there.
+ */
+function makeStudioEnvTexture(share: Record<Verdict, number>): THREE.Texture {
+  const w = 512;
+  const h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#050507";
+  ctx.fillRect(0, 0, w, h);
+
+  const blob = (x: number, y: number, r: number, color: string, alpha: number) => {
+    if (alpha <= 0) return;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color);
+    g.addColorStop(0.45, color);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.globalAlpha = Math.min(alpha, 1);
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.globalAlpha = 1;
+  };
+
+  // The constant: a hard key lamp, high and left. Studio, not data.
+  blob(w * 0.24, h * 0.2, w * 0.24, "#ffffff", 0.92);
+  // The data: three gels, set well apart so their washes meet across the
+  // surface instead of stacking into one muddy tint.
+  blob(w * 0.62, h * 0.32, w * 0.26, VERDICT_COLOR.BLOCKED, share.BLOCKED * 0.95);
+  blob(w * 0.88, h * 0.62, w * 0.2, VERDICT_COLOR.NEEDS_REVIEW, share.NEEDS_REVIEW * 0.95);
+  blob(w * 0.42, h * 0.76, w * 0.22, VERDICT_COLOR.SAFE, share.SAFE * 0.9);
+  // A cold bounce off the floor, so the shadow side is never dead black.
+  blob(w * 0.04, h * 0.88, w * 0.2, "#16233f", 0.75);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -396,18 +552,24 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   /**
    * Composition, resolved in screen space so it holds at any aspect ratio.
    *
-   * On a landscape viewport the graph is pushed into the right margin and
-   * shaped into a tall, narrow ellipsoid — a vertical spine of structure in
-   * the margin, which keeps its footprint on the one axis the headline
-   * competes for as small as the node count allows. Because the group spins
-   * about its own Y axis and its radius is bounded, that bias is not something
-   * the rotation can undo: the structure orbits an off-centre axis and never
-   * sweeps back across the type.
+   * The risk core is the page's one hero object, so it is sized off the SHORT
+   * edge of the viewport: ~24.5% of it in landscape, which puts the artifact's
+   * own silhouette at roughly half the viewport height and a third of its
+   * width. Everything else — the evidence shell, the node radii, the mote
+   * orbits — is expressed as a multiple of that radius, so the whole scene
+   * scales as one object instead of drifting apart between breakpoints.
+   *
+   * Horizontally the core sits at ~61% of the frame on a landscape viewport:
+   * right of centre, because the headline owns the left, but nowhere near the
+   * edge. The numbers are chosen so the widest thing in the scene (a mote at
+   * full orbit radius on the outermost node) still lands inside the frame at
+   * 1920, 1440 and 1024 even at the extreme of the pointer parallax and the
+   * camera drift combined.
    *
    * On a portrait viewport there is no right margin — the headline runs the
-   * full width — so the bias rotates ninety degrees: the graph centres
-   * horizontally, flattens, and drops below the standfirst into the only
-   * clear band on the screen. The veil switches axis with it (see GRAPH_CSS).
+   * full width — so the bias rotates ninety degrees: the core centres
+   * horizontally and drops into the lower third. The veil switches axis with
+   * it (see GRAPH_CSS).
    *
    * `wide` interpolates between the two so there is no snap at any width.
    */
@@ -415,15 +577,21 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     const halfW = viewport.width / 2;
     const halfH = viewport.height / 2;
     const wide = clamp((viewport.width / viewport.height - 0.95) / 0.55, 0, 1);
-    const rx = lerp(halfW * 0.72, Math.min(halfW * 0.3, halfH * 0.44), wide);
-    const ry = lerp(halfH * 0.3, halfH * 0.8, wide);
+    const span = Math.min(viewport.width, viewport.height);
+
+    const coreRadius = span * lerp(0.19, 0.245, wide);
+    // The evidence shell orbits OUTSIDE the core rather than inside it, so the
+    // real nodes read as a structure around the artifact, not as freckles on it.
+    const shell = coreRadius * lerp(2.0, 1.95, wide);
+
     return {
-      centerX: halfW * lerp(0, 0.52, wide),
-      centerY: halfH * lerp(-0.55, -0.02, wide),
-      rx,
-      ry,
-      rz: rx,
-      nodeScale: clamp(Math.min(rx, ry) / 1.6, 0.55, 1.5),
+      centerX: lerp(0, halfW * 0.18, wide),
+      centerY: lerp(-halfH * 0.34, -halfH * 0.02, wide),
+      rx: shell,
+      ry: shell * lerp(0.92, 0.78, wide),
+      rz: shell,
+      coreRadius,
+      nodeScale: clamp(coreRadius / 1.75, 0.6, 1.6),
     };
   }, [viewport.width, viewport.height]);
 
@@ -453,13 +621,17 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   const sphereGeo = useMemo(() => new THREE.SphereGeometry(1, 20, 20), []);
   const reticleGeo = useMemo(() => new THREE.RingGeometry(0.955, 1, 64), []);
   const glowTex = useMemo(() => makeGlowTexture(), []);
+  const rimTex = useMemo(() => makeRimTexture(), []);
+  const streakTex = useMemo(() => makeStreakTexture(), []);
   useEffect(
     () => () => {
       sphereGeo.dispose();
       reticleGeo.dispose();
       glowTex.dispose();
+      rimTex.dispose();
+      streakTex.dispose();
     },
-    [sphereGeo, reticleGeo, glowTex],
+    [sphereGeo, reticleGeo, glowTex, rimTex, streakTex],
   );
 
   /* ---------------- evidence field ---------------- */
@@ -492,6 +664,8 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     return geo;
   }, [motes]);
   useEffect(() => () => moteGeo.dispose(), [moteGeo]);
+  /** Written per frame from real scroll position — see the frame loop. */
+  const moteMatRef = useRef<THREE.PointsMaterial>(null);
 
   /* ---------------- reactive severity ---------------- */
 
@@ -504,6 +678,24 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   }, [results]);
 
   /**
+   * The real verdict mix, as three shares of the scan. These are the exact
+   * numbers the hero's proportion bar and the stat tiles render — here they
+   * are spent as light instead of as type: the artifact is lit by the
+   * account's own findings, and a verdict with no resources in it contributes
+   * no light at all, so the lighting can never imply a finding that isn't there.
+   */
+  const verdictShare = useMemo(() => {
+    const n = results.length;
+    const of = (v: Verdict) =>
+      n === 0 ? 0 : results.filter((r) => r.verdict === v).length / n;
+    return {
+      BLOCKED: of("BLOCKED"),
+      NEEDS_REVIEW: of("NEEDS_REVIEW"),
+      SAFE: of("SAFE"),
+    };
+  }, [results]);
+
+  /**
    * The core's displacement amplitude. A calm account barely ripples; an
    * account where Cedar refused most of what it was asked about boils. Both
    * terms are real aggregates, so this is a readout with a skin on it.
@@ -512,12 +704,22 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
 
   /**
    * A dense icosphere whose vertices are displaced on the CPU every frame.
-   * MeshBasicMaterial is unlit by design here, so only the silhouette carries
-   * the distortion — and a silhouette needs vertex density, which is why this
-   * is detail 4 (2562 vertices) rather than a coarse blob. ~7.7k sin() per
-   * frame is a rounding error next to the draw calls it sits beside.
+   *
+   * The core is a LIT surface now, so vertex density buys two things rather
+   * than one: the silhouette carries the distortion, and — because the normals
+   * are recomputed alongside the positions — so does the shading. Detail 12 is
+   * 3380 faces over 1692 welded vertices, which is what makes the travelling
+   * specular highlights break over the ripples instead of stepping across
+   * visible facets.
+   *
+   * The weld is mandatory, not tidiness — see weldByPosition.
    */
-  const coreGeo = useMemo(() => new THREE.IcosahedronGeometry(1, 4), []);
+  const coreGeo = useMemo(() => {
+    const raw = new THREE.IcosahedronGeometry(1, 12);
+    const welded = weldByPosition(raw);
+    raw.dispose();
+    return welded;
+  }, []);
   const coreBase = useMemo(
     () => Float32Array.from(coreGeo.attributes.position.array as ArrayLike<number>),
     [coreGeo],
@@ -530,20 +732,76 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   /** Damage propagates faster the more of the account is actually blocked. */
   const pulseRate = PULSE_RATE * (1 + severity * 0.8);
 
-  // The risk core: a single dominant visual object at the real center of the
-  // graph, colored by the account's real aggregate state — not decoration,
-  // the same three-state signal the kill-switch banner and stat tiles show,
-  // just given weight as the page's one hero object instead of buried in
-  // small type. Sized off the real resource count so a bigger scan reads as
-  // a bigger, denser core.
+  // The risk core: the page's hero object, at the real center of the graph and
+  // colored by the account's real aggregate state — not decoration, the same
+  // three-state signal the kill-switch banner and stat tiles show, given the
+  // scale it deserves. Its radius comes from `place` so the artifact is sized
+  // against the viewport rather than against the node count: a scan of eight
+  // resources still gets a centrepiece.
   const coreColor = useMemo(() => {
     if (layout.nodes.some((n) => n.verdict === "BLOCKED")) return VERDICT_COLOR.BLOCKED;
     if (layout.nodes.some((n) => n.verdict === "NEEDS_REVIEW")) return VERDICT_COLOR.NEEDS_REVIEW;
     return VERDICT_COLOR.SAFE;
   }, [layout.nodes]);
-  const coreRadius = (0.55 + Math.min(layout.nodes.length, 20) * 0.02) * place.nodeScale;
+  const coreRadius = place.coreRadius;
   const coreRingRefs = useRef<(THREE.Mesh | null)[]>([]);
   const coreGlowRef = useRef<THREE.Sprite>(null);
+  const coreRimRef = useRef<THREE.Sprite>(null);
+
+  /* ---------------- the lighting rig ---------------- */
+
+  const gl = useThree((s) => s.gl);
+
+  /**
+   * The studio, prefiltered into a real IBL. PMREM is the only env-map format
+   * three's physical materials accept, and it is what lets `roughness`
+   * actually blur the reflection instead of mirroring a gradient.
+   *
+   * Wrapped, because this is the one line in the component that touches the
+   * renderer directly: a driver that refuses the float render target must cost
+   * the page a duller orb, never a blank background. (CanvasBoundary would
+   * catch a throw, but it would take the whole scene with it.)
+   */
+  const env = useMemo(() => {
+    try {
+      const src = makeStudioEnvTexture(verdictShare);
+      const pmrem = new THREE.PMREMGenerator(gl);
+      const target = pmrem.fromEquirectangular(src);
+      pmrem.dispose();
+      src.dispose();
+      return target;
+    } catch {
+      return null;
+    }
+  }, [gl, verdictShare]);
+  useEffect(() => () => env?.dispose(), [env]);
+
+  /**
+   * Four punctual lights around the artifact.
+   *
+   * One is a fixed cool key — the studio lamp, constant regardless of what the
+   * scan found. The other three ARE the scan: one per verdict, in that
+   * verdict's locked status colour, with a brightness equal to that verdict's
+   * real share of the account. A clean account is lit green; an account Cedar
+   * mostly refused is lit red from below. Nothing is floored, so a verdict
+   * with zero resources is genuinely dark.
+   *
+   * `irr` is irradiance at the core's surface, not raw intensity: three's
+   * lighting is physical (1/r² falloff), so the intensity a light needs
+   * depends on how far out it orbits, and that distance scales with the
+   * viewport. Expressing the rig in irradiance keeps it looking identical at
+   * every breakpoint.
+   */
+  const lightRig = useMemo(
+    () => [
+      { color: "#eaf2ff", irr: 2.3, radius: 2.5, y: 1.5, phase: 0.85, speed: 0.043 },
+      { color: VERDICT_COLOR.BLOCKED, irr: verdictShare.BLOCKED * 4.4, radius: 2.15, y: -0.95, phase: 3.6, speed: 0.031 },
+      { color: VERDICT_COLOR.NEEDS_REVIEW, irr: verdictShare.NEEDS_REVIEW * 4.4, radius: 2.6, y: 0.45, phase: 5.35, speed: -0.024 },
+      { color: VERDICT_COLOR.SAFE, irr: verdictShare.SAFE * 4.4, radius: 2.3, y: -1.65, phase: 1.9, speed: 0.037 },
+    ],
+    [verdictShare],
+  );
+  const lightRefs = useRef<(THREE.PointLight | null)[]>([]);
 
   // Under reduced motion the Canvas runs on demand rather than every frame
   // (see frameloop below), so nothing is repainted unless something actually
@@ -572,13 +830,13 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     }
 
     // Pointer parallax is a pan, not a swing: translating the camera keeps the
-    // right-margin bias intact, where a lookAt() would rock the graph back
-    // across the headline.
+    // composition intact, where a lookAt() would rock the artifact back across
+    // the headline.
     const p = pointerRef.current;
     const scrolled = scrollRef.current;
     // Three incommensurable periods (94s / 153s / 217s) so the drift never
     // visibly repeats — the scene is always moving and never loops.
-    const driftX = reduced ? 0 : -DRIFT_X * (0.5 + 0.5 * Math.sin(t * 0.067));
+    const driftX = reduced ? 0 : Math.sin(t * 0.067) * DRIFT_X;
     const driftY = reduced ? 0 : Math.sin(t * 0.041) * DRIFT_Y;
     const driftZ = reduced ? 0 : Math.sin(t * 0.029) * DRIFT_Z;
     camTarget.set(
@@ -625,12 +883,39 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       ring.rotation.x = t * speed * (i % 2 === 0 ? 1 : -1);
       ring.rotation.y = t * speed * 0.7;
     });
+
+    /*
+      The lights orbit. This is the single most important motion in the scene
+      now: the artifact itself barely turns, so what moves across its surface
+      is the LIGHT — a hard cool key sweeping one way, the verdict lamps
+      crossing the other, specular highlights breaking over the ripples.
+      Three different periods, none a multiple of another, so the rig never
+      returns to the same pose.
+    */
+    for (let i = 0; i < lightRig.length; i++) {
+      const light = lightRefs.current[i];
+      if (!light) continue;
+      const rig = lightRig[i];
+      const a = rig.phase + (reduced ? 0 : t * rig.speed);
+      light.position.set(
+        Math.cos(a) * rig.radius * coreRadius,
+        rig.y * coreRadius,
+        Math.sin(a) * rig.radius * coreRadius,
+      );
+    }
+
     // Slow ambient pulse on the core's glow — same 8-14s cinematic band as
     // every other glow on the page, never a fast blink. A blocked-heavy
     // account burns brighter at the same cadence.
     if (coreGlowRef.current) {
       const pulse = reduced ? 1 : 0.85 + Math.sin(t * (Math.PI * 2) / 10) * 0.15;
-      coreGlowRef.current.material.opacity = (0.52 + severity * 0.3) * pulse;
+      coreGlowRef.current.material.opacity = (0.33 + severity * 0.24) * pulse;
+    }
+    // The refractive lip breathes on its own, slower period — so the rim and
+    // the bloom are never at peak together and the object keeps shifting.
+    if (coreRimRef.current) {
+      const pulse = reduced ? 1 : 0.8 + Math.sin(t * (Math.PI * 2) / 13 + 1.1) * 0.2;
+      coreRimRef.current.material.opacity = 0.78 * pulse;
     }
 
     /*
@@ -639,6 +924,15 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       the distort material, without pulling a shader library in. Vertices are
       pushed along their own radius from the pristine copy in `coreBase`, so
       the deformation never accumulates or drifts off the unit sphere.
+
+      Two octaves, not one. At the frequencies this started with (~2.1 on a
+      unit sphere) a single wave is a third of a cycle across the whole
+      object — readable as a wobble on a 60px blob, invisible on a 530px one.
+      The first octave is the slow heave that still shapes the silhouette; the
+      second, roughly twice the frequency at a tenth the amplitude, is the fine
+      boil that gives the highlights something to break over. Both numbers are
+      ceilings found by looking: push the second octave much past this and the
+      key light's specular shatters into speckle instead of travelling.
     */
     const corePos = coreGeo.attributes.position;
     const arr = corePos.array as Float32Array;
@@ -648,15 +942,24 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       const y = coreBase[i + 1];
       const z = coreBase[i + 2];
       const n =
-        Math.sin(x * 2.1 + tt) *
-        Math.sin(y * 2.7 - tt * 0.83) *
-        Math.sin(z * 2.3 + tt * 0.61);
+        Math.sin(x * 3.1 + tt) *
+          Math.sin(y * 3.7 - tt * 0.83) *
+          Math.sin(z * 3.3 + tt * 0.61) +
+        0.1 *
+          Math.sin(x * 7.3 - tt * 1.4) *
+          Math.sin(y * 7.9 + tt * 1.1) *
+          Math.sin(z * 7.6 - tt * 1.7);
       const d = 1 + distortAmp * n;
       arr[i] = x * d;
       arr[i + 1] = y * d;
       arr[i + 2] = z * d;
     }
     corePos.needsUpdate = true;
+    // The surface is lit now, so displacing it without recomputing normals
+    // would leave the shading perfectly smooth over a rippling silhouette —
+    // the single tell that separates a real displaced surface from a sphere
+    // with a bumpy outline. 3380 welded faces is a sub-millisecond cost.
+    coreGeo.computeVertexNormals();
 
     // A breath on the whole core, and a wireframe shell turning against it so
     // the object reads as a containment field around something unstable
@@ -673,8 +976,15 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       The evidence field. Each mote rides a circle in its own plane around the
       resource the record belongs to, with a slow radial breath so the shell
       never crystallises into a set of clean rings.
+
+      Real scroll position is the second input: as the hero leaves, every orbit
+      widens and the whole field dims, so the tight evidence shells around each
+      resource disperse into ambient dust behind the sections below. The motion
+      is genuinely scroll-linked — it does not run on its own — and it fades as
+      it spreads, so the field never competes with the verdict table's type.
     */
     if (motes.length > 0) {
+      const spread = 1 + scrolled * 1.1;
       const motePos = moteGeo.attributes.position;
       const marr = motePos.array as Float32Array;
       for (let i = 0; i < motes.length; i++) {
@@ -687,54 +997,200 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
         const r =
           m.radius *
           place.nodeScale *
+          spread *
           (reduced ? 1 : 1 + Math.sin(t * 0.4 + m.phase) * 0.12);
         marr[i * 3] = c.x + (m.u.x * cos + m.v.x * sin) * r;
         marr[i * 3 + 1] = c.y + (m.u.y * cos + m.v.y * sin) * r;
         marr[i * 3 + 2] = c.z + (m.u.z * cos + m.v.z * sin) * r;
       }
       motePos.needsUpdate = true;
+      if (moteMatRef.current) moteMatRef.current.opacity = 0.9 - scrolled * 0.55;
     }
   });
 
   return (
-    <group ref={groupRef} position={[place.centerX, place.centerY, 0]}>
-      {/* The risk core — real aggregate state, given real visual weight. */}
+    <group position={[place.centerX, place.centerY, 0]}>
+      {/*
+        The risk core — real aggregate state, given real visual weight.
+
+        It sits OUTSIDE the spinning group on purpose. The evidence structure
+        orbits; the artifact is held still and dead-on, and what moves across
+        it is the light. That is the whole difference between a spinning ball
+        and a lit object.
+      */}
       <group>
-        {/* A fixed cool-blue ambient undertone, offset behind the real-state
-            glow — the same identity color as the hero's own glow, so the
-            core reads as a two-tone plasma object (Cortexa-style) rather
-            than a flat single-hue ball, without diluting what the dominant
-            color actually means. */}
-        <sprite scale={[coreRadius * 11, coreRadius * 11, 1]} position={[0.15, -0.1, -0.3]}>
+        {/*
+          The rig. One fixed cool key plus one lamp per verdict, each burning
+          at that verdict's real share of the scan (see `lightRig`). Nothing
+          else in this scene is lit — every node, edge, mote and ring is an
+          unlit readout — so these four lights touch exactly one object: the
+          core. Adding them cannot change what any data-bearing colour means.
+        */}
+        <ambientLight intensity={0.16} color="#6f83ad" />
+        {lightRig.map((rig, i) => (
+          <pointLight
+            key={i}
+            ref={(l) => {
+              lightRefs.current[i] = l;
+            }}
+            color={rig.color}
+            // Physical falloff: intensity is irradiance x distance². See lightRig.
+            intensity={rig.irr * Math.pow(rig.radius * coreRadius, 2)}
+            decay={2}
+          />
+        ))}
+
+        {/*
+          Two anamorphic streaks through the artifact's waist — the lens flare
+          the reference direction leans on. The wide one carries the account's
+          real dominant verdict colour; the short one is the cool key's own
+          flare, which is what sells the two as the same optical event.
+        */}
+        <sprite
+          scale={[coreRadius * 11, coreRadius * 0.8, 1]}
+          position={[0, coreRadius * 0.12, -coreRadius * 0.4]}
+        >
           <spriteMaterial
-            map={glowTex}
-            color="#3B82F6"
+            map={streakTex}
+            color={coreColor}
             transparent
-            opacity={0.35}
+            opacity={0.2 + severity * 0.14}
             blending={THREE.AdditiveBlending}
             depthWrite={false}
             fog={false}
             toneMapped={false}
           />
         </sprite>
+        <sprite
+          scale={[coreRadius * 6, coreRadius * 0.34, 1]}
+          position={[coreRadius * 0.25, coreRadius * 0.52, -coreRadius * 0.3]}
+        >
+          <spriteMaterial
+            map={streakTex}
+            color="#9fc4ff"
+            transparent
+            opacity={0.22}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+
+        {/* A fixed cool-blue ambient undertone, offset behind the real-state
+            glow — the same identity color as the hero's own glow, so the
+            core reads as a two-tone plasma object rather than a flat
+            single-hue ball, without diluting what the dominant color means. */}
+        <sprite
+          scale={[coreRadius * 8, coreRadius * 8, 1]}
+          position={[coreRadius * 0.3, -coreRadius * 0.2, -coreRadius * 0.5]}
+        >
+          <spriteMaterial
+            map={glowTex}
+            color="#3B82F6"
+            transparent
+            opacity={0.2}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+
+        {/*
+          The artifact itself: a clearcoated gunmetal, not an emissive blob.
+
+          That choice does two jobs at once. It is what makes the object read
+          as a dramatically lit THING — most of its surface falls away into
+          shadow, and the light that lands on it is the account's own verdict
+          mix — and it is what keeps 140px of white display type legible where
+          the headline crosses it, because an unlit emissive fill at this
+          scale would be a floodlight behind the type.
+
+          The base colour is deliberately neutral. On a metal, `color` tints
+          the reflection, so a coloured body would put the verdict hue
+          everywhere and make it mean nothing; keeping the metal grey means
+          every scrap of colour on this object arrives as LIGHT — the verdict
+          lamps, the studio blob in the env map, the sheen — which is the only
+          honest way to render a readout as a surface. Iridescence gives the
+          prismatic shift at the terminator, clearcoat gives the hard white
+          specular the lamps rake across, and the emissive floor means the
+          dominant verdict is present even where nothing is lighting it.
+        */}
         <mesh ref={coreMeshRef} geometry={coreGeo} scale={coreRadius}>
-          <meshBasicMaterial color={coreColor} toneMapped={false} />
+          <meshPhysicalMaterial
+            color="#545a6c"
+            metalness={0.84}
+            roughness={0.29}
+            clearcoat={1}
+            clearcoatRoughness={0.12}
+            iridescence={0.85}
+            iridescenceIOR={1.5}
+            iridescenceThicknessRange={[120, 520]}
+            sheen={0.35}
+            sheenColor={coreColor}
+            sheenRoughness={0.5}
+            emissive={coreColor}
+            emissiveIntensity={0.05 + severity * 0.09}
+            envMap={env?.texture ?? null}
+            envMapIntensity={1.4}
+            fog={false}
+          />
         </mesh>
+
+        {/*
+          The refractive lip. A billboarded annulus just outside the
+          silhouette, which is where a polished object throws its brightest
+          chromatic edge. Drawn rather than shaded — see makeRimTexture.
+
+          The 2.6 is load-bearing: the texture's bright ring sits at 93% of the
+          sprite's half-size, i.e. 1.21 core radii, while the displaced surface
+          only ever reaches 1 + distortAmp (0.27 at the theoretical worst, ~0.14
+          on a real payload). So the lip always clears the silhouette and is
+          never swallowed by the depth test, while its inner feather still
+          overlaps the edge it is supposed to be hugging.
+        */}
+        <sprite ref={coreRimRef} scale={[coreRadius * 2.6, coreRadius * 2.6, 1]}>
+          <spriteMaterial
+            map={rimTex}
+            color="#d8e6ff"
+            transparent
+            opacity={0.78}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+
         {/* Containment shell: a coarse wireframe cage turning against the
             core's own spin. It brightens with the real blocked share, so the
             cage looks like it is straining on a bad account. */}
-        <mesh ref={coreShellRef} scale={coreRadius * 1.46}>
+        <mesh ref={coreShellRef} scale={coreRadius * 1.5}>
           <icosahedronGeometry args={[1, 1]} />
           <meshBasicMaterial
             color={coreColor}
             wireframe
             transparent
-            opacity={0.14 + severity * 0.26}
+            opacity={0.13 + severity * 0.24}
             depthWrite={false}
             toneMapped={false}
           />
         </mesh>
-        {[1.55, 2.05, 2.6].map((mult, i) => (
+
+        {/*
+          The armature. Three gyroscope hoops on independent axes.
+
+          Radius and tube are both deliberately small. A hoop at 2.4 core radii
+          is a 600px arc at 1440, and a 600px arc with any visible thickness
+          stops being an armature and becomes a grey band sweeping through the
+          headline — which is precisely what it did on the first pass. Held at
+          1.9 radii and a 0.009 tube they stay inside the artifact's own
+          footprint and read as structure, not as smears. The middle hoop is
+          cool white — the key light's own colour — so the set does not read as
+          three copies of one ring.
+        */}
+        {[1.28, 1.48, 1.72].map((mult, i) => (
           <mesh
             key={i}
             ref={(m) => {
@@ -742,21 +1198,55 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
             }}
             scale={coreRadius * mult}
           >
-            <torusGeometry args={[1, 0.035, 12, 64]} />
+            <torusGeometry args={[1, 0.006, 8, 128]} />
             <meshBasicMaterial
-              color={coreColor}
+              color={i === 1 ? "#cfe0ff" : coreColor}
               transparent
-              opacity={0.3 + severity * 0.22 - i * 0.08}
+              opacity={0.26 + severity * 0.16 - i * 0.06}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
               toneMapped={false}
             />
           </mesh>
         ))}
-        <sprite ref={coreGlowRef} scale={[coreRadius * 9, coreRadius * 9, 1]}>
+
+        {/*
+          Layered bloom. Three additive falloffs at different radii rather than
+          one: a tight hot centre, the mid halo that carries the account's real
+          state, and a wide atmospheric wash that puts light on the void itself.
+          Stacking them is what gives the glow a real curve instead of the flat
+          disc a single sprite always reads as.
+        */}
+        <sprite scale={[coreRadius * 2.9, coreRadius * 2.9, 1]}>
+          <spriteMaterial
+            map={glowTex}
+            color="#ffffff"
+            transparent
+            opacity={0.13 + severity * 0.1}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+        <sprite ref={coreGlowRef} scale={[coreRadius * 6, coreRadius * 6, 1]}>
           <spriteMaterial
             map={glowTex}
             color={coreColor}
             transparent
-            opacity={0.6}
+            opacity={0.34}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            fog={false}
+            toneMapped={false}
+          />
+        </sprite>
+        <sprite scale={[coreRadius * 11, coreRadius * 11, 1]} position={[0, 0, -coreRadius]}>
+          <spriteMaterial
+            map={glowTex}
+            color={coreColor}
+            transparent
+            opacity={0.16}
             blending={THREE.AdditiveBlending}
             depthWrite={false}
             fog={false}
@@ -765,6 +1255,8 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
         </sprite>
       </group>
 
+      {/* Everything below is the evidence, and the evidence is what orbits. */}
+      <group ref={groupRef}>
       {layout.nodes.map((nd, i) => {
         const color = VERDICT_COLOR[nd.verdict];
         // Radius is the real dependent count. The resources that would break
@@ -827,12 +1319,13 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       {motes.length > 0 ? (
         <points geometry={moteGeo}>
           <pointsMaterial
+            ref={moteMatRef}
             map={glowTex}
-            size={0.14 * place.nodeScale}
+            size={0.15 * place.nodeScale}
             sizeAttenuation
             vertexColors
             transparent
-            opacity={0.85}
+            opacity={0.9}
             blending={THREE.AdditiveBlending}
             depthWrite={false}
             toneMapped={false}
@@ -871,6 +1364,7 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
           />
         </sprite>
       ))}
+      </group>
     </group>
   );
 }
@@ -886,8 +1380,8 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
  * `--hero-text-edge` is derived from the headline's real type metrics rather
  * than guessed: the hero's longest line ("this resource") measures ~7.9em in
  * Unbounded 900 at .mirror-display-crush's -0.055em tracking, at font-size
- * clamp(1.9rem, 10vw, 9rem) — Hero.tsx's CLAIM_SIZE, which these two numbers
- * must be kept in step with — offset by the hero's md:px-12 gutter. So the
+ * clamp(1.9rem, 8.6vw, 8.2rem) — Hero.tsx's CLAIM_SIZE, which these two
+ * numbers must be kept in step with — offset by the hero's md:px-12 gutter. So the
  * veil tracks the actual right edge of the headline at every viewport width
  * instead of drifting off it at, say, 1440px where the type occupies ~80% of
  * the screen.
@@ -909,15 +1403,27 @@ const GRAPH_CSS = `
 */
 
 .mirror-graph-veil {
-  --hero-text-edge: calc(48px + 7.9 * clamp(1.9rem, 10vw, 9rem));
+  --hero-text-edge: calc(48px + 7.9 * clamp(1.9rem, 8.6vw, 8.2rem));
   position: absolute;
   inset: 0;
+  /*
+    The veil is now a RAKING light, not a blanket. The previous ramp held
+    ~0.86 all the way out to the headline's right edge and only cleared 12vw
+    later, which on a 1440 screen meant the scene was only ever visible in the
+    right 6% of the frame — the single reason the artifact read as dim and
+    cornered. These stops are expressed as fractions of the same real type
+    metric, so the darkness still tracks the headline, but it is spent almost
+    entirely on the left column where the type actually lives and is gone by
+    the time it reaches the artifact.
+  */
   background: linear-gradient(
     to right,
-    rgba(10, 10, 10, 0.975) 0,
-    rgba(10, 10, 10, 0.965) calc(var(--hero-text-edge) * 0.72),
-    rgba(10, 10, 10, 0.86) var(--hero-text-edge),
-    rgba(10, 10, 10, 0) calc(var(--hero-text-edge) + 12vw)
+    rgba(10, 10, 10, 0.94) 0,
+    rgba(10, 10, 10, 0.9) calc(var(--hero-text-edge) * 0.26),
+    rgba(10, 10, 10, 0.62) calc(var(--hero-text-edge) * 0.5),
+    rgba(10, 10, 10, 0.18) calc(var(--hero-text-edge) * 0.74),
+    rgba(10, 10, 10, 0.04) calc(var(--hero-text-edge) * 0.92),
+    rgba(10, 10, 10, 0) calc(var(--hero-text-edge) * 1.06)
   );
   -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 19%, #000 84%, transparent 99%);
   mask-image: linear-gradient(to bottom, transparent 2%, #000 19%, #000 84%, transparent 99%);
@@ -926,31 +1432,64 @@ const GRAPH_CSS = `
 }
 
 /* Always on: keeps the graph from reading as wallpaper and holds the nav and
-   the verdict table on solid ground at the top and bottom of the viewport. */
+   the verdict table on solid ground at the top and bottom of the viewport.
+   The radial term is re-centred on the artifact (62% / 48%) and opened up, so
+   the vignette frames the core rather than cropping its glow. */
 .mirror-graph-vignette {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(to bottom, rgba(10, 10, 10, 0.78) 0, rgba(10, 10, 10, 0) 16%),
-    linear-gradient(to top, rgba(10, 10, 10, 0.7) 0, rgba(10, 10, 10, 0) 20%),
-    radial-gradient(ellipse 118% 88% at 50% 46%, rgba(10, 10, 10, 0) 36%, rgba(10, 10, 10, 0.8) 100%);
+    linear-gradient(to bottom, rgba(10, 10, 10, 0.74) 0, rgba(10, 10, 10, 0) 14%),
+    linear-gradient(to top, rgba(10, 10, 10, 0.66) 0, rgba(10, 10, 10, 0) 18%),
+    radial-gradient(ellipse 132% 104% at 62% 48%, rgba(10, 10, 10, 0) 44%, rgba(10, 10, 10, 0.74) 100%);
+}
+
+/*
+  Caustics — the light the artifact throws back onto the void around it.
+
+  Four soft elliptical fields on screen-blend, drifting against each other on a
+  26s cycle that shares no factor with the 3D drift periods, so the pattern
+  never repeats.
+
+  Every stop here is an ellipse with a long fade. A conic gradient was the
+  obvious way to get refracted spokes and it is the wrong tool: its stops are
+  hard angular edges, and over a lit sphere they render as opaque pie wedges
+  across the whole hero. Caustics are soft or they are nothing.
+*/
+.mirror-graph-caustics {
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(ellipse 22% 34% at 70% 30%, rgba(150, 190, 255, 0.09), transparent 70%),
+    radial-gradient(ellipse 30% 18% at 52% 70%, rgba(255, 70, 70, 0.05), transparent 72%),
+    radial-gradient(ellipse 14% 26% at 78% 58%, rgba(200, 220, 255, 0.05), transparent 74%),
+    radial-gradient(ellipse 40% 14% at 62% 44%, rgba(255, 150, 120, 0.035), transparent 76%);
+  animation: mirror-caustics 26s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes mirror-caustics {
+  0%, 100% { transform: translate3d(-1.6%, -1.1%, 0) scale(1.02); opacity: 0.4; }
+  50% { transform: translate3d(1.9%, 1.5%, 0) scale(1.1); opacity: 0.72; }
 }
 
 /*
   Portrait: the headline runs the full width, so a left-weighted veil would
   simply black out the whole screen. The veil turns through ninety degrees
   with the graph — a horizontal band protecting the type, clearing for the
-  lower third the graph has moved into — and the heavy bottom fade is eased
-  off, because on this axis the bottom of the screen is where the graph lives.
+  lower third the artifact has moved into. It never reaches zero on this axis,
+  because on a phone the readout rail sits directly over the core.
 */
 @media (max-aspect-ratio: 1 / 1) {
   .mirror-graph-veil {
     background: linear-gradient(
       to bottom,
-      rgba(10, 10, 10, 0.96) 0,
-      rgba(10, 10, 10, 0.94) 56%,
-      rgba(10, 10, 10, 0.5) 69%,
-      rgba(10, 10, 10, 0) 80%
+      rgba(10, 10, 10, 0.95) 0,
+      rgba(10, 10, 10, 0.92) 40%,
+      rgba(10, 10, 10, 0.62) 56%,
+      rgba(10, 10, 10, 0.4) 72%,
+      rgba(10, 10, 10, 0.34) 100%
     );
     -webkit-mask-image: none;
     mask-image: none;
@@ -958,12 +1497,18 @@ const GRAPH_CSS = `
   .mirror-graph-vignette {
     background:
       linear-gradient(to bottom, rgba(10, 10, 10, 0.7) 0, rgba(10, 10, 10, 0) 13%),
-      radial-gradient(ellipse 132% 96% at 50% 52%, rgba(10, 10, 10, 0) 46%, rgba(10, 10, 10, 0.72) 100%);
+      radial-gradient(ellipse 140% 104% at 50% 62%, rgba(10, 10, 10, 0) 48%, rgba(10, 10, 10, 0.7) 100%);
+  }
+  .mirror-graph-caustics {
+    background:
+      radial-gradient(ellipse 52% 22% at 50% 66%, rgba(150, 190, 255, 0.08), transparent 72%),
+      radial-gradient(ellipse 60% 16% at 50% 78%, rgba(255, 60, 60, 0.045), transparent 74%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .mirror-graph-veil { transition: none; }
+  .mirror-graph-caustics { animation: none; opacity: 0.5; }
 }
 `;
 
@@ -1010,26 +1555,50 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
   const [webgl] = useState(detectWebGL);
   const [reduced] = useState(prefersReducedMotion);
   const veilRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef({ x: 0, y: 0 });
   const scrollRef = useRef(0);
 
   const live = webgl && results.length > 0;
 
+  /**
+   * One scroll listener for the whole page's depth.
+   *
+   * It publishes two things. `scrollRef` (0-1 through the hero) is what the 3D
+   * scene reads. `--mirror-scroll-y` — raw scrollY as a bare number on the
+   * document element — is what index.css reads to parallax the fixed
+   * atmosphere layers (grid, grain, halftone) against each other, which is how
+   * the page gets depth below the fold without a second listener or a single
+   * extra DOM node. Deliberately NOT gated on `live`: a machine with no WebGL
+   * still gets the parallax, because none of it is 3D.
+   */
   useEffect(() => {
-    if (!live) return;
+    if (typeof window === "undefined") return;
 
     let queued = 0;
 
-    const onPointerMove = (e: PointerEvent) => {
-      pointerRef.current.x = (e.clientX / window.innerWidth) * 2 - 1;
-      pointerRef.current.y = (e.clientY / window.innerHeight) * 2 - 1;
-    };
-
     const applyScroll = () => {
       queued = 0;
-      const p = clamp(window.scrollY / Math.max(window.innerHeight, 1), 0, 1);
+      const y = window.scrollY;
+      const vh = Math.max(window.innerHeight, 1);
+      const p = clamp(y / vh, 0, 1);
       scrollRef.current = p;
       if (veilRef.current) veilRef.current.style.opacity = String(1 - p * 0.8);
+      document.documentElement.style.setProperty("--mirror-scroll-y", y.toFixed(1));
+
+      /* The orb is now large enough to dominate the frame, which is exactly
+         what the hero wants — but this canvas is `fixed`, so without this it
+         stays that bright and that big behind every section all the way to
+         the footer, fighting unbacked section text (the legend, the
+         account-signal cluster) for contrast. It has no business being
+         anything but a faint ambient presence once you're two hero-heights
+         past it, so the whole scene (canvas + caustics + vignette; the veil
+         already fades on its own, faster, for the hero text itself) recedes
+         from full presence to a quiet 14% over that stretch and holds there
+         — never fully gone, so the "living background" behind later panels
+         survives, just no longer competing with anything printed on it. */
+      const recede = clamp((y - vh * 0.55) / (vh * 0.75), 0, 1);
+      if (sceneRef.current) sceneRef.current.style.opacity = String(1 - recede * 0.94);
     };
 
     const onScroll = () => {
@@ -1038,13 +1607,23 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
 
     applyScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    if (!reduced) window.addEventListener("pointermove", onPointerMove, { passive: true });
 
     return () => {
       if (queued) cancelAnimationFrame(queued);
       window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("pointermove", onPointerMove);
     };
+  }, []);
+
+  useEffect(() => {
+    if (!live || reduced) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      pointerRef.current.x = (e.clientX / window.innerWidth) * 2 - 1;
+      pointerRef.current.y = (e.clientY / window.innerHeight) * 2 - 1;
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onPointerMove);
   }, [live, reduced]);
 
   // No data, or no WebGL: the page still gets its void, never a crash.
@@ -1059,27 +1638,34 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
       className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-void"
     >
       <style>{GRAPH_CSS}</style>
-      <CanvasBoundary>
-        <Canvas
-          dpr={[1, 1.75]}
-          frameloop={reduced ? "demand" : "always"}
-          camera={{ position: [0, 0, BASE_CAMERA_Z], fov: 50 }}
-          gl={{ antialias: true, powerPreference: "high-performance" }}
-        >
-          {/* Fog, not lights: every material here is unlit on purpose. These
-              are readout points, not a lit diorama, and depth is carried by
-              the void swallowing the far side of the structure. */}
-          <fog attach="fog" args={[VOID, 10, 22]} />
-          <GraphScene
-            results={results}
-            reduced={reduced}
-            pointerRef={pointerRef}
-            scrollRef={scrollRef}
-          />
-        </Canvas>
-      </CanvasBoundary>
+      <div ref={sceneRef} className="absolute inset-0">
+        <CanvasBoundary>
+          <Canvas
+            dpr={[1, 1.75]}
+            frameloop={reduced ? "demand" : "always"}
+            camera={{ position: [0, 0, BASE_CAMERA_Z], fov: 50 }}
+            gl={{ antialias: true, powerPreference: "high-performance" }}
+          >
+            {/* Fog carries depth for the EVIDENCE — nodes, edges, motes, pulses
+                are all still unlit readout points, and the void swallowing the
+                far side of the structure is what makes the shell read as a
+                volume. The core opts out (fog={false}); it is a lit object with
+                its own rig and it is meant to sit in front of all of this.
+                Pushed out from 10-22 to 11-26 because the structure is now
+                roughly twice as deep as it was. */}
+            <fog attach="fog" args={[VOID, 11, 26]} />
+            <GraphScene
+              results={results}
+              reduced={reduced}
+              pointerRef={pointerRef}
+              scrollRef={scrollRef}
+            />
+          </Canvas>
+        </CanvasBoundary>
+        <div className="mirror-graph-caustics" />
+        <div className="mirror-graph-vignette" />
+      </div>
       <div ref={veilRef} className="mirror-graph-veil" />
-      <div className="mirror-graph-vignette" />
     </div>
   );
 }
