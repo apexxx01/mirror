@@ -5,23 +5,47 @@ import * as THREE from "three";
 import type { MirrorResult, Verdict } from "../types";
 
 /**
- * GraphBackground — the real AWS dependency graph, rendered as the page's
- * living substrate.
+ * GraphBackground — the real AWS dependency graph, rendered as a quasar.
  *
- * Every point on screen is one resource Mirror actually evaluated, and every
- * line is one dependency edge Mirror actually found. Nothing here is padded
- * out with decorative particles: `results.length` spheres, and exactly one
- * line per real entry in `dependents`. That constraint is the whole point —
- * a background that is literally the evidence.
+ * Every mark on screen is something Mirror actually found. `results.length`
+ * spheres, exactly one line per real entry in `dependents`, one orbiting mote
+ * per real evidence record, and one streaming ASCII glyph per real field —
+ * resource names, Cedar decisions, policy ids, blast-radius hops, CloudWatch
+ * error counts, decision-matrix scenarios, rollback steps. Nothing here is
+ * padded out with decorative particles. That constraint is the whole point: a
+ * background that is literally the evidence.
+ *
+ * The centrepiece is a black hole.
+ *
+ *  - The EVENT HORIZON is the darkest object in the scene — a pure #000 sphere
+ *    that writes depth and emits nothing. It is not drawn so much as carved:
+ *    every glow, streak, halo and disk fragment behind it is depth-culled by
+ *    its silhouette, so the hole is a genuine absence punched through the
+ *    light rather than a black ball painted on top of it. That is also what
+ *    makes 140px of white Unbounded survive crossing it.
+ *
+ *  - The ACCRETION DISK is the hero's verdict spectrum bar, revolved. Hot
+ *    white-blue at the inner edge, then radial colour bands whose WIDTHS are
+ *    the account's real verdict shares in the three locked status hues — a
+ *    verdict with no resources in it occupies no band at all, so the disk can
+ *    never imply a finding that isn't there. It shears Keplerian (inner
+ *    material laps the rim) and is Doppler-beamed on the approaching limb.
+ *
+ *  - The GLYPH STREAM is the telemetry: real strings from the payload, drawn
+ *    into a canvas atlas and flung outward through the disk plane on instanced
+ *    billboards. Glyphs from resources Cedar refused ride the polar jets
+ *    instead — refusals are what the quasar ejects.
+ *
+ *  - The NEBULA behind it is the scan again, blurred into gas: one soft cloud
+ *    per scanned resource, sized by how much evidence Mirror holds on it and
+ *    tinted by its verdict, pulled most of the way toward a deep indigo so it
+ *    reads as depth rather than as a status signal.
  *
  * Two facts about the real payload shaped every decision below:
  *
- *  1. The graph is SMALL. Mirror's sandbox produces ~8 resources and ~3 edges.
- *     A scatter of eight 6px dots is not a centrepiece, so the presence has to
- *     come from how much each real node is worth looking at — size that
- *     encodes real dependent count, glow that encodes real risk_score,
- *     reticles on exactly the resources Cedar blocked, and pulses that travel
- *     the real edges in the direction damage would actually propagate.
+ *  1. The graph is SMALL. Mirror's sandbox produces ~9 resources and ~3 edges.
+ *     A scatter of nine 6px dots is not a centrepiece, so the presence has to
+ *     come from how much each real record is worth looking at.
  *
  *  2. The Hero deliberately has NO scrim. Its 140px white Unbounded headline
  *     sits on bare void, and the hero's implementer left the contrast problem
@@ -53,22 +77,29 @@ const MAX_PULSES = 64;
 /**
  * Pointer-parallax pan, in world units at the graph's depth.
  *
- * The core is no longer hiding in the right margin — it is the centrepiece, and
- * the composition (see `place`) leaves real clearance on both sides — so the
- * parallax is symmetric again rather than being spent entirely on protecting
- * the headline's right edge.
+ * The quasar is the centrepiece, and the composition (see `place`) leaves real
+ * clearance on both sides, so the parallax is symmetric rather than being spent
+ * entirely on protecting the headline's right edge.
  */
 const PARALLAX_X = 0.34;
 const PARALLAX_Y = 0.24;
 
 /**
  * Camera drift, on top of the parallax pan — a slow breath so the scene is
- * never still even when the pointer is. Symmetric on all three axes now that
- * the structure sits away from both edges; the Z term is a dolly.
+ * never still even when the pointer is. The Z term is a dolly.
  */
 const DRIFT_X = 0.3;
 const DRIFT_Y = 0.46;
 const DRIFT_Z = 0.62;
+
+/**
+ * The disk's resting inclination. Shallow enough that the ring reads as a disk
+ * seen at an angle (the iconic silhouette) and steep enough that the far limb
+ * clears the horizon's top edge.
+ */
+const DISK_TILT = -0.42;
+/** How far the cursor is allowed to tip the disk. Real interactivity, small amplitude. */
+const DISK_TILT_POINTER = 0.13;
 
 /* ------------------------------------------------------------------ *
  * Layout
@@ -148,10 +179,9 @@ function makeGlowTexture(): THREE.Texture {
  * A hollow annulus — transparent through the middle, a hard bright ring at 93%
  * of the radius, feathered on both sides.
  *
- * Billboarded just outside the core's silhouette this reads as a refractive
- * edge: the bright chromatic lip you get where light grazes the rim of a
- * glass or polished object. It is the cheapest honest substitute for a
- * fresnel shader, and unlike a shader it costs one sprite.
+ * Billboarded just outside the horizon this is the photon ring: the last stable
+ * orbit of light, which is the one feature that makes a black sphere read as a
+ * black HOLE rather than as a dead pixel.
  */
 function makeRimTexture(): THREE.Texture {
   const size = 256;
@@ -176,10 +206,9 @@ function makeRimTexture(): THREE.Texture {
 /**
  * An anamorphic streak — a long horizontal smear with a soft vertical falloff.
  *
- * Two of these, additively blended and scaled to different widths, are the
- * lens flare the reference direction asks for. Building it as one texture
- * rather than a post-processing flare pass keeps the no-new-dependency rule
- * intact and costs two more sprites.
+ * Two of these, additively blended behind the horizon, are the quasar's glare.
+ * Building it as one texture rather than a post-processing flare pass keeps the
+ * no-new-dependency rule intact and costs two more sprites.
  */
 function makeStreakTexture(): THREE.Texture {
   const w = 512;
@@ -211,100 +240,219 @@ function makeStreakTexture(): THREE.Texture {
 }
 
 /**
- * Weld a non-indexed geometry's duplicate corners into shared vertices.
+ * The gravitational lens, drawn rather than traced.
  *
- * This is not a micro-optimisation, it is a correctness fix. `IcosahedronGeometry`
- * (like every PolyhedronGeometry) is non-indexed: each triangle carries its own
- * three corners, so `computeVertexNormals` has nothing to average and assigns
- * every corner its own FACE normal. That is flat shading — which was invisible
- * while the core was unlit and, the moment it became a lit surface, turned it
- * into a ball with a few dozen hard triangular highlights stamped on it.
+ * A real black hole bends the light of the disk material BEHIND it up and over
+ * the top (and under the bottom) of the horizon, which is why the iconic
+ * silhouette is a flat ring with a second ring standing vertically through it.
+ * Ray-marching a Schwarzschild metric for that is a whole shader budget; the
+ * honest cheap version is an annulus whose alpha is modulated by ANGLE —
+ * strongest at the poles of the silhouette, zero at the sides where the flat
+ * disk already covers the frame — billboarded so it always stands up against
+ * the camera. The top limb is brighter than the bottom, which is what sells it
+ * as light arriving over the horizon rather than as a decorative halo.
  *
- * Welding by position gives each vertex one normal averaged over every face
- * that touches it, which is what makes a displaced surface read as a surface.
- * It also makes the per-frame work cheaper: the displacement loop then runs
- * over unique vertices (~1.7k) instead of every corner of every face (~10k).
- *
- * Only `position` is carried across — the core's material has no maps, and the
- * normals are recomputed every frame anyway.
+ * One per-pixel pass over 256x256 at mount. Nothing per frame.
  */
-function weldByPosition(source: THREE.BufferGeometry): THREE.BufferGeometry {
-  const src = source.attributes.position.array as ArrayLike<number>;
-  const seen = new Map<string, number>();
-  const verts: number[] = [];
-  const index: number[] = [];
+function makeLensTexture(): THREE.Texture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const img = ctx.createImageData(size, size);
+  const data = img.data;
+  const half = size / 2;
 
-  for (let i = 0; i < src.length; i += 3) {
-    const key = `${src[i].toFixed(5)}|${src[i + 1].toFixed(5)}|${src[i + 2].toFixed(5)}`;
-    let id = seen.get(key);
-    if (id === undefined) {
-      id = verts.length / 3;
-      seen.set(key, id);
-      verts.push(src[i], src[i + 1], src[i + 2]);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (x - half) / half;
+      const ny = (y - half) / half;
+      const r = Math.hypot(nx, ny);
+      // A thin bright band at 0.8 of the half-size, feathered on both sides.
+      const band = Math.exp(-Math.pow((r - 0.8) / 0.075, 2));
+      // Poles bright, sides clear. |sin| peaks at the top and bottom of the ring.
+      const ang = Math.atan2(ny, nx);
+      const pole = Math.pow(Math.abs(Math.sin(ang)), 2.6);
+      // The upper limb carries more of the lensed light than the lower.
+      const bias = ny < 0 ? 1 : 0.55;
+      const a = clamp(band * pole * bias, 0, 1);
+      const i = (y * size + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(a * 255);
     }
-    index.push(id);
   }
-
-  const welded = new THREE.BufferGeometry();
-  welded.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-  welded.setIndex(index);
-  return welded;
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /**
- * The studio, painted as an equirectangular panorama.
+ * The bipolar jet: a double-ended plume, narrow and white-hot at the horizon,
+ * widening and cooling as it leaves.
  *
- * The core is a metal, and a metal has almost no diffuse response — with no
- * environment to reflect it is a black ball with four specular dots on it.
- * Rather than ship an HDRI (a new asset, and a large one) the studio is drawn
- * here and run through PMREM into a proper prefiltered IBL. That reflection is
- * most of what the surface actually shows, which is why it is worth being
- * exact about what goes in it.
- *
- * Four lamps: one constant hard white key, and one gel per verdict whose
- * brightness is that verdict's REAL share of the scan. So the colour washing
- * across the artifact is the account's verdict mix, in the same three locked
- * status hues the table uses, in the same proportions — a clean account
- * reflects green, an account Cedar mostly refused reflects red. A verdict with
- * no resources in it paints nothing, so the reflection can never imply a
- * finding that isn't there.
+ * Drawn symmetric about the centre so a single plane carries both poles, and
+ * cylindrically billboarded at render time (rotated about its own axis to face
+ * the camera) rather than sprite-billboarded, because a jet has to stay welded
+ * to the disk's normal as the disk tilts.
  */
-function makeStudioEnvTexture(share: Record<Verdict, number>): THREE.Texture {
-  const w = 512;
-  const h = 256;
+function makeJetTexture(): THREE.Texture {
+  const w = 128;
+  const h = 512;
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#050507";
-  ctx.fillRect(0, 0, w, h);
+  const img = ctx.createImageData(w, h);
+  const data = img.data;
 
-  const blob = (x: number, y: number, r: number, color: string, alpha: number) => {
-    if (alpha <= 0) return;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, color);
-    g.addColorStop(0.45, color);
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.globalAlpha = Math.min(alpha, 1);
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    ctx.globalAlpha = 1;
-  };
-
-  // The constant: a hard key lamp, high and left. Studio, not data.
-  blob(w * 0.24, h * 0.2, w * 0.24, "#ffffff", 0.92);
-  // The data: three gels, set well apart so their washes meet across the
-  // surface instead of stacking into one muddy tint.
-  blob(w * 0.62, h * 0.32, w * 0.26, VERDICT_COLOR.BLOCKED, share.BLOCKED * 0.95);
-  blob(w * 0.88, h * 0.62, w * 0.2, VERDICT_COLOR.NEEDS_REVIEW, share.NEEDS_REVIEW * 0.95);
-  blob(w * 0.42, h * 0.76, w * 0.22, VERDICT_COLOR.SAFE, share.SAFE * 0.9);
-  // A cold bounce off the floor, so the shadow side is never dead black.
-  blob(w * 0.04, h * 0.88, w * 0.2, "#16233f", 0.75);
-
+  for (let y = 0; y < h; y++) {
+    const ny = (y / (h - 1)) * 2 - 1; // -1 top, +1 bottom
+    const ay = Math.abs(ny);
+    const halfWidth = 0.055 + 0.46 * Math.pow(ay, 1.35);
+    const falloff = Math.pow(1 - ay, 1.15);
+    for (let x = 0; x < w; x++) {
+      const nx = (x / (w - 1)) * 2 - 1;
+      const sheath = Math.exp(-Math.pow(nx / halfWidth, 2) * 2.1);
+      const core = Math.exp(-Math.pow(nx / (halfWidth * 0.3), 2) * 2.6);
+      const a = clamp(falloff * (sheath * 0.62 + core * 0.55), 0, 1);
+      const i = (y * w + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
-  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+/**
+ * One nebula cloud, as a soft clump of overlapping falloffs rather than a
+ * single gradient — a lone radial gradient reads as a headlight, and gas does
+ * not have a centre. Deterministic from `seed` (FNV-1a, no Math.random), and
+ * masked by a global radial falloff so the sprite never shows its own square.
+ */
+function makeNebulaTexture(seed: number): THREE.Texture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  for (let i = 0; i < 22; i++) {
+    const h1 = hashUnit(`neb${seed}/x${i}`);
+    const h2 = hashUnit(`neb${seed}/y${i}`);
+    const h3 = hashUnit(`neb${seed}/r${i}`);
+    const cx = size * (0.5 + (h1 - 0.5) * 0.66);
+    const cy = size * (0.5 + (h2 - 0.5) * 0.66);
+    const rad = size * (0.1 + h3 * 0.26);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    g.addColorStop(0, `rgba(255,255,255,${(0.1 + h3 * 0.14).toFixed(3)})`);
+    g.addColorStop(0.55, `rgba(255,255,255,${(0.03 + h3 * 0.05).toFixed(3)})`);
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+  }
+
+  // Kill the square. Everything past 50% of the half-size fades to nothing.
+  ctx.globalCompositeOperation = "destination-in";
+  const mask = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  mask.addColorStop(0, "rgba(0,0,0,1)");
+  mask.addColorStop(0.5, "rgba(0,0,0,0.85)");
+  mask.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = mask;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* ------------------------------------------------------------------ *
+ * The glyph atlas
+ * ------------------------------------------------------------------ */
+
+const TILE_W = 256;
+const TILE_H = 64;
+const ATLAS_COLS = 8;
+/** 16 rows x 8 columns. Past this the payload has more distinct strings than
+ *  one 2048x1024 texture can carry, and the surplus glyphs are DROPPED rather
+ *  than pointed at somebody else's label. */
+export const MAX_TILES = ATLAS_COLS * 16;
+
+interface GlyphAtlas {
+  texture: THREE.Texture;
+  /** text -> (uv offset x, uv offset y, uv scale x, uv scale y). */
+  tiles: Map<string, THREE.Vector4>;
+  /** text -> the glyph's real aspect ratio (width / height), so the quad fits it. */
+  aspect: Map<string, number>;
+}
+
+/**
+ * Every distinct real string in the payload, rendered once into a tiled canvas.
+ *
+ * Tiles are fixed-size but the text inside them is not, so each tile also
+ * records the fraction of its width the string actually occupies — the
+ * instanced quad is then scaled to that fraction, which is what keeps
+ * "SAFE" from being stretched across the same box as
+ * "via env_var:REPORTS…".
+ */
+function buildGlyphAtlas(texts: string[]): GlyphAtlas {
+  const unique = Array.from(new Set(texts)).slice(0, MAX_TILES);
+  const rows = Math.max(1, Math.ceil(unique.length / ATLAS_COLS));
+  const canvas = document.createElement("canvas");
+  canvas.width = TILE_W * ATLAS_COLS;
+  canvas.height = TILE_H * rows;
+  const ctx = canvas.getContext("2d")!;
+  // Space Mono is the page's universal UI voice; the fallbacks are all
+  // monospaced too, so a glyph that renders before the webfont lands still
+  // reads as terminal output rather than as prose.
+  ctx.font = '700 34px "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff";
+
+  const tiles = new Map<string, THREE.Vector4>();
+  const aspect = new Map<string, number>();
+
+  unique.forEach((text, i) => {
+    const col = i % ATLAS_COLS;
+    const row = Math.floor(i / ATLAS_COLS);
+    const ox = col * TILE_W;
+    const oy = row * TILE_H;
+    ctx.fillText(text, ox + 6, oy + TILE_H / 2, TILE_W - 12);
+    const used = Math.min(ctx.measureText(text).width + 12, TILE_W);
+    const frac = used / TILE_W;
+    tiles.set(
+      text,
+      new THREE.Vector4(
+        (col * TILE_W) / canvas.width,
+        // CanvasTexture flips on upload, so canvas row `row` lives at
+        // v = 1 - (row + 1) * tileHeight.
+        1 - ((row + 1) * TILE_H) / canvas.height,
+        (frac * TILE_W) / canvas.width,
+        TILE_H / canvas.height,
+      ),
+    );
+    aspect.set(text, (frac * TILE_W) / TILE_H);
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // No mipmaps: at a couple of hundred pixels per glyph the minified levels
+  // would only bleed neighbouring tiles into each other.
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+
+  return { texture, tiles, aspect };
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -458,7 +606,7 @@ export interface EvidenceMote {
 
 /**
  * A hard ceiling so a pathological payload cannot turn the background into a
- * per-frame CPU bill. The real sandbox produces ~80 motes; this is ~17x that.
+ * per-frame CPU bill. The real sandbox produces ~58 motes; this is ~24x that.
  */
 export const MAX_MOTES = 1400;
 
@@ -519,14 +667,393 @@ export function buildEvidenceField(results: MirrorResult[]): EvidenceMote[] {
 /**
  * The account's real aggregate severity: the share of scanned resources Cedar
  * actually refused, in [0,1]. This is the one number that drives every
- * reactive intensity in the scene — core distortion, shell brightness, edge
- * opacity, pulse speed — so a clean account renders calm and a compromised one
- * renders violent, from real data rather than a mood setting.
+ * reactive intensity in the scene — jet brightness, Doppler beaming, glow,
+ * edge opacity, pulse speed — so a clean account renders calm and a
+ * compromised one renders violent, from real data rather than a mood setting.
  */
 export function severityOf(results: MirrorResult[]): number {
   if (results.length === 0) return 0;
   return results.filter((r) => r.verdict === "BLOCKED").length / results.length;
 }
+
+/**
+ * The real verdict mix, as three shares of the scan summing to 1.
+ *
+ * These are the exact numbers the hero's proportion bar and the stat tiles
+ * render. Here they are spent as the accretion disk's radial colour bands: the
+ * hero's spectrum bar, revolved. A verdict with no resources in it gets a band
+ * of zero width, so the disk cannot imply a finding that isn't there.
+ */
+export function verdictShares(results: MirrorResult[]): Record<Verdict, number> {
+  const n = results.length;
+  const of = (v: Verdict) => (n === 0 ? 0 : results.filter((r) => r.verdict === v).length / n);
+  return { BLOCKED: of("BLOCKED"), NEEDS_REVIEW: of("NEEDS_REVIEW"), SAFE: of("SAFE") };
+}
+
+/* ------------------------------------------------------------------ *
+ * The glyph stream
+ * ------------------------------------------------------------------ */
+
+/** Long enough for "via env_var:REPORTS_BUC…" to still be a sentence. */
+export const GLYPH_MAX_CHARS = 22;
+/** ~13 glyphs per resource on the real payload; this is ~24 resources' worth. */
+export const MAX_GLYPHS = 320;
+
+/** One real string, ejected from the resource it was read off. */
+export interface GlyphToken {
+  /** The exact payload string (trimmed, and truncated with an ellipsis if long). */
+  text: string;
+  /** Index into `results`. */
+  owner: number;
+  /** The verdict that colours it — for a decision-matrix row, the ROW's verdict. */
+  verdict: Verdict;
+  /** Owner's real risk_score, normalised. Drives size and brightness. */
+  heat: number;
+  /** True when this token rides the polar jet instead of the disk. */
+  jet: boolean;
+  seedA: number;
+  seedB: number;
+}
+
+/** Collapse whitespace; truncate with an ellipsis rather than silently cutting. */
+export function shortenToken(s: string): string {
+  const flat = String(s ?? "").replace(/\s+/g, " ").trim();
+  if (flat.length <= GLYPH_MAX_CHARS) return flat;
+  return `${flat.slice(0, GLYPH_MAX_CHARS - 1)}…`;
+}
+
+/**
+ * The longest `-`-terminated prefix every scanned resource's name shares.
+ *
+ * On a real account that is the deployment prefix ("mirror-demo-"), and if it
+ * is left in, every glyph in the stream starts with the same twelve characters
+ * and the telemetry reads as one repeated word. Stripping it is a real
+ * transformation of a real string — nothing is invented, and if the account's
+ * names share nothing this returns "" and the full names are used.
+ */
+export function sharedNamePrefix(results: MirrorResult[]): string {
+  const names = results.map((r) => r.node_name).filter((n): n is string => Boolean(n));
+  if (names.length < 2) return "";
+  let p = names[0];
+  for (const n of names) {
+    let i = 0;
+    while (i < p.length && i < n.length && p[i] === n[i]) i++;
+    p = p.slice(0, i);
+    if (!p) return "";
+  }
+  const cut = p.lastIndexOf("-");
+  return cut > 2 ? p.slice(0, cut + 1) : "";
+}
+
+/**
+ * Every real string in the payload, turned into one ejected glyph.
+ *
+ * The list below is the exhaustive enumeration of the fields `MirrorResult`
+ * actually carries — resource id, verdict, risk score, the Cedar decision and
+ * each policy id behind it, the reversibility level, the Mirror badge, every
+ * blast-radius hop (with its real 90-day invocation count where CloudWatch
+ * returned one), every adversarial error/throttle reading, every
+ * decision-matrix scenario (coloured by THAT row's verdict, not the
+ * resource's), every downstream effect's real `via` edge, and every rollback
+ * step. There is no "filler" branch: if the scan returned nothing for a field,
+ * no glyph exists for it.
+ *
+ * Glyphs off a resource Cedar refused ride the polar jets — every third one,
+ * so the disk keeps its share of the refusals too.
+ */
+export function buildGlyphStream(results: MirrorResult[]): GlyphToken[] {
+  const out: GlyphToken[] = [];
+  const prefix = sharedNamePrefix(results);
+  const strip = (s: string) => (prefix && s.includes(prefix) ? s.replace(prefix, "") : s);
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const heat = clamp(r.risk_score, 0, 100) / 100;
+    const refused = r.verdict === "BLOCKED";
+    let k = 0;
+
+    const push = (raw: string | null | undefined, verdict: Verdict = r.verdict) => {
+      if (out.length >= MAX_GLYPHS) return;
+      const text = shortenToken(raw ?? "");
+      if (!text) return;
+      out.push({
+        text,
+        owner: i,
+        verdict,
+        heat,
+        jet: refused && k % 3 === 0,
+        seedA: hashUnit(`${r.resource}#g${k}`),
+        seedB: hashUnit(`g${k}@${r.resource}`),
+      });
+      k++;
+    };
+
+    push(strip(r.resource));
+    push(r.verdict);
+    push(`risk ${r.risk_score}`);
+    push(r.cedar_decision);
+    if (r.reversibility?.level) push(`rev ${r.reversibility.level}`);
+    if (r.mirror_score?.badge) push(r.mirror_score.badge);
+
+    for (const reason of r.cedar_reasons ?? []) push(reason);
+
+    for (const b of r.blast_radius ?? []) {
+      push(
+        typeof b.invocations_90d === "number"
+          ? `hop${b.hop} inv ${b.invocations_90d}`
+          : `hop${b.hop} ${strip(b.resource)}`,
+      );
+    }
+
+    for (const a of r.adversarial ?? []) {
+      const parts: string[] = [];
+      if (typeof a.errors === "number") parts.push(`err ${a.errors}`);
+      if (typeof a.throttles === "number") parts.push(`thr ${a.throttles}`);
+      push(parts.length > 0 ? `hop${a.hop} ${parts.join(" ")}` : `hop${a.hop} adversarial`);
+    }
+
+    for (const row of r.decision_matrix ?? []) push(row.scenario, row.verdict);
+    for (const d of r.future_diff?.downstream ?? []) push(`via ${d.via}`);
+    for (const s of r.rollback_plan?.steps ?? []) push(s);
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * Nebula
+ * ------------------------------------------------------------------ */
+
+/** One cloud per scanned resource, capped so a huge account stays cheap. */
+export const MAX_CLOUDS = 24;
+
+export interface NebulaCloud {
+  owner: number;
+  verdict: Verdict;
+  /** Which of the three deterministic cloud textures this one uses. */
+  tile: number;
+  /** Position in units of the evidence shell radius. Negative z is "behind". */
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  alpha: number;
+  drift: number;
+}
+
+/**
+ * The scan, blurred into gas.
+ *
+ * One cloud per scanned resource: its size and opacity are how much evidence
+ * Mirror holds on that resource (`evidenceCount`), its tint is that resource's
+ * verdict, and its position is a deterministic hash of its name. So the
+ * background depth is the account too — it is just out of focus. Nothing is
+ * padded; a one-resource scan gets one cloud.
+ */
+export function buildNebula(results: MirrorResult[]): NebulaCloud[] {
+  const out: NebulaCloud[] = [];
+  for (let i = 0; i < results.length && out.length < MAX_CLOUDS; i++) {
+    const r = results[i];
+    const h1 = hashUnit(`neb:${r.resource}`);
+    const h2 = hashUnit(`${r.resource}:neb`);
+    const h3 = hashUnit(`cloud/${r.resource}`);
+    const density = Math.min(evidenceCount(r), 14) / 14;
+    out.push({
+      owner: i,
+      verdict: r.verdict,
+      tile: Math.floor(h3 * 3) % 3,
+      x: (h1 - 0.5) * 3.6,
+      y: (h2 - 0.5) * 2.2,
+      z: -0.9 - h3 * 2.6,
+      scale: 1.45 + density * 1.9,
+      alpha: 0.1 + density * 0.16,
+      drift: (h1 - 0.5) * 0.055,
+    });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * Shaders
+ * ------------------------------------------------------------------ */
+
+/**
+ * The accretion disk.
+ *
+ * Geometry is a flat ring in its own XY plane, laid down by the mesh's own
+ * rotation. The vertex stage warps it — a real disk is not a sheet of paper,
+ * and the warp is what stops the silhouette from reading as a flat cutout.
+ */
+const DISK_VERT = /* glsl */ `
+  uniform float uTime;
+  uniform float uWarp;
+  varying vec2 vXY;
+
+  void main() {
+    vec3 p = position;
+    float r = length(p.xy);
+    float a = atan(p.y, p.x);
+    p.z += sin(a * 2.0 + uTime * 0.08) * uWarp * r;
+    vXY = p.xy;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  }
+`;
+
+/**
+ * Four real things are happening in here and nothing else is:
+ *
+ *  1. Keplerian shear. Angular velocity falls off as r^-1.5, so the inner
+ *     material laps the rim — the single cue that separates an accretion disk
+ *     from a spinning CD.
+ *  2. The verdict bands. `uBandW` is the account's real verdict mix and
+ *     `uBandC` the three locked status hues; a band of zero width contributes
+ *     nothing, so the colour can never imply a verdict the scan did not return.
+ *  3. Doppler beaming. The limb rotating toward the camera is brighter.
+ *  4. The cursor. Proximity brightens the gas and twists the filaments — a
+ *     real local disturbance in the flow, not an overlay.
+ */
+const DISK_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uRIn;
+  uniform float uROut;
+  uniform float uShear;
+  uniform float uBeam;
+  uniform float uOpacity;
+  uniform float uPointerBoost;
+  uniform vec2 uPointer;
+  uniform vec3 uBandC[3];
+  uniform float uBandW[3];
+  varying vec2 vXY;
+
+  void main() {
+    float r = length(vXY);
+    float t = clamp((r - uRIn) / max(uROut - uRIn, 1e-4), 0.0, 1.0);
+    float ang = atan(vXY.y, vXY.x);
+
+    float pd = length(vXY - uPointer);
+    float near = exp(-(pd * pd) / max(uRIn * uRIn * 1.3, 1e-4));
+
+    float orbit = ang
+      + uTime * uShear / pow(max(r / uRIn, 0.45), 1.5)
+      + near * uPointerBoost * 2.4;
+
+    // Filaments: three incommensurable angular frequencies, sheared together.
+    float f = 0.55 + 0.45 * sin(orbit * 5.0 + r * 1.7);
+    f *= 0.62 + 0.38 * sin(orbit * 11.0 - r * 3.4 + 1.7);
+    f = mix(0.40, 1.28, clamp(f, 0.0, 1.0));
+    f *= 0.86 + 0.20 * sin(orbit * 27.0 + uTime * 0.7);
+
+    // The verdict bands, cross-faded so the disk grades rather than stripes.
+    float x = clamp((t - 0.13) / 0.87, 0.0, 1.0);
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    float lo = 0.0;
+    for (int i = 0; i < 3; i++) {
+      float w = uBandW[i];
+      if (w <= 0.0) { continue; }
+      float c = lo + w * 0.5;
+      float d = (x - c) / (w * 0.5 + 0.22);
+      float wt = exp(-d * d * 2.0);
+      acc += uBandC[i] * wt;
+      wsum += wt;
+      lo += w;
+    }
+    vec3 band = wsum > 0.0 ? acc / wsum : vec3(0.55, 0.72, 1.0);
+
+    vec3 hot = mix(vec3(1.0, 0.985, 0.95), vec3(0.55, 0.76, 1.0), smoothstep(0.0, 0.15, t));
+    vec3 col = mix(hot, band, smoothstep(0.05, 0.32, t));
+
+    float bright = 0.16 + 1.5 * pow(1.0 - t, 2.0);
+    float edge = smoothstep(0.0, 0.05, t) * (1.0 - smoothstep(0.58, 1.0, t));
+    float beam = 1.0 + uBeam * sin(ang);
+
+    float a = bright * edge * f * beam * uOpacity * (1.0 + near * uPointerBoost * 0.9);
+    a = clamp(a, 0.0, 1.0);
+    if (a < 0.004) discard;
+    gl_FragColor = vec4(col * (0.8 + 0.55 * bright), a);
+  }
+`;
+
+/**
+ * The glyph stream.
+ *
+ * Every glyph's whole trajectory lives in the vertex shader — the CPU writes
+ * one uniform per frame and nothing else — and the quad is built in VIEW space
+ * so the text stays upright and camera-facing no matter how the disk is tilted.
+ *
+ *   aOrbit = (launch angle, 1/lifetime, phase, rise per unit radius)
+ *   aShape = (glyph aspect ratio, jet flag)
+ *   aTile  = (atlas uv offset, atlas uv scale)
+ */
+const GLYPH_VERT = /* glsl */ `
+  uniform float uTime;
+  uniform float uRIn;
+  uniform float uROut;
+  uniform float uShear;
+  uniform float uJet;
+  uniform float uHeight;
+  uniform float uOpacity;
+  uniform float uPointerBoost;
+  uniform vec3 uPointer;
+
+  attribute vec4 aTile;
+  attribute vec4 aOrbit;
+  attribute vec2 aShape;
+  attribute vec3 aColor;
+
+  varying vec2 vUv;
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    float u = fract(aOrbit.y * uTime + aOrbit.z);
+
+    // In the disk: launched at the inner edge, dragged backwards by the same
+    // Keplerian shear the gas obeys, drifting off the midplane as it goes.
+    float r = mix(uRIn, uROut, pow(u, 0.72));
+    float theta = aOrbit.x - uTime * uShear / pow(max(r / uRIn, 0.5), 1.5);
+    vec3 diskP = vec3(cos(theta) * r, aOrbit.w * (r - uRIn), sin(theta) * r);
+
+    // On the jet: straight up or down the disk's own normal, fanning slightly.
+    float dir = aOrbit.w >= 0.0 ? 1.0 : -1.0;
+    float jr = mix(uRIn * 0.16, uRIn * 0.8, u);
+    vec3 jetP = vec3(
+      cos(aOrbit.x) * jr,
+      dir * mix(uRIn * 0.35, uJet, pow(u, 0.85)),
+      sin(aOrbit.x) * jr
+    );
+
+    vec3 p = mix(diskP, jetP, aShape.y);
+
+    // The cursor pushes the stream away from itself, with a tight falloff.
+    vec3 away = p - uPointer;
+    float d2 = dot(away, away);
+    p += normalize(away + vec3(1e-4)) * uPointerBoost * uRIn * 0.55
+       * exp(-d2 / max(uRIn * uRIn * 1.2, 1e-4));
+
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    mv.xy += position.xy * vec2(uHeight * aShape.x, uHeight);
+    gl_Position = projectionMatrix * mv;
+
+    vUv = uv * aTile.zw + aTile.xy;
+    vColor = aColor;
+    vAlpha = sin(3.141592653589793 * u) * uOpacity;
+  }
+`;
+
+const GLYPH_FRAG = /* glsl */ `
+  uniform sampler2D uAtlas;
+  varying vec2 vUv;
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    float m = texture2D(uAtlas, vUv).a;
+    float a = m * vAlpha;
+    if (a < 0.012) discard;
+    gl_FragColor = vec4(vColor, a);
+  }
+`;
 
 /* ------------------------------------------------------------------ *
  * Scene
@@ -552,26 +1079,21 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   /**
    * Composition, resolved in screen space so it holds at any aspect ratio.
    *
-   * The risk core is the page's one hero object, so it is sized off the SHORT
-   * edge of the viewport: ~24.5% of it in landscape, which puts the artifact's
-   * own silhouette at roughly half the viewport height and a third of its
-   * width. Everything else — the evidence shell, the node radii, the mote
-   * orbits — is expressed as a multiple of that radius, so the whole scene
-   * scales as one object instead of drifting apart between breakpoints.
+   * `shell` — the radius the real dependency structure orbits at — is the
+   * anchor, because that is the widest thing on screen and it is what the
+   * existing framing (1920 / 1440 / 1024 / 390, at the extreme of pointer
+   * parallax plus camera drift) was tuned against. Everything the quasar is
+   * made of is then expressed as a fraction of it: the event horizon at
+   * shell/3.4, the disk from 1.35 to 2.75 horizons, the glyph stream out to
+   * 3.3. So the whole scene scales as one object between breakpoints, and the
+   * outermost glyph still lands inside the frame.
    *
-   * Horizontally the core sits at ~61% of the frame on a landscape viewport:
+   * Horizontally the quasar sits at ~59% of the frame on a landscape viewport:
    * right of centre, because the headline owns the left, but nowhere near the
-   * edge. The numbers are chosen so the widest thing in the scene (a mote at
-   * full orbit radius on the outermost node) still lands inside the frame at
-   * 1920, 1440 and 1024 even at the extreme of the pointer parallax and the
-   * camera drift combined.
-   *
-   * On a portrait viewport there is no right margin — the headline runs the
-   * full width — so the bias rotates ninety degrees: the core centres
+   * edge. On a portrait viewport there is no right margin — the headline runs
+   * the full width — so the bias rotates ninety degrees: it centres
    * horizontally and drops into the lower third. The veil switches axis with
-   * it (see GRAPH_CSS).
-   *
-   * `wide` interpolates between the two so there is no snap at any width.
+   * it (see GRAPH_CSS). `wide` interpolates so there is no snap at any width.
    */
   const place = useMemo(() => {
     const halfW = viewport.width / 2;
@@ -579,10 +1101,8 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     const wide = clamp((viewport.width / viewport.height - 0.95) / 0.55, 0, 1);
     const span = Math.min(viewport.width, viewport.height);
 
-    const coreRadius = span * lerp(0.19, 0.245, wide);
-    // The evidence shell orbits OUTSIDE the core rather than inside it, so the
-    // real nodes read as a structure around the artifact, not as freckles on it.
-    const shell = coreRadius * lerp(2.0, 1.95, wide);
+    const shell = span * lerp(0.38, 0.478, wide);
+    const horizon = shell / 3.4;
 
     return {
       centerX: lerp(0, halfW * 0.18, wide),
@@ -590,8 +1110,15 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       rx: shell,
       ry: shell * lerp(0.92, 0.78, wide),
       rz: shell,
-      coreRadius,
-      nodeScale: clamp(coreRadius / 1.75, 0.6, 1.6),
+      shell,
+      horizon,
+      // The disk hugs the horizon (1.18) rather than standing off it. At the
+      // physically-correct innermost stable orbit the gap reads as a second,
+      // larger black disc and the silhouette doubles in apparent size.
+      diskIn: horizon * 1.18,
+      diskOut: horizon * 3.0,
+      glyphOut: horizon * 3.2,
+      nodeScale: clamp(horizon, 0.6, 1.6),
     };
   }, [viewport.width, viewport.height]);
 
@@ -619,19 +1146,27 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   useEffect(() => () => edgeGeometry.dispose(), [edgeGeometry]);
 
   const sphereGeo = useMemo(() => new THREE.SphereGeometry(1, 20, 20), []);
+  const horizonGeo = useMemo(() => new THREE.SphereGeometry(1, 64, 48), []);
   const reticleGeo = useMemo(() => new THREE.RingGeometry(0.955, 1, 64), []);
   const glowTex = useMemo(() => makeGlowTexture(), []);
   const rimTex = useMemo(() => makeRimTexture(), []);
   const streakTex = useMemo(() => makeStreakTexture(), []);
+  const lensTex = useMemo(() => makeLensTexture(), []);
+  const jetTex = useMemo(() => makeJetTexture(), []);
+  const nebulaTex = useMemo(() => [0, 1, 2].map((s) => makeNebulaTexture(s)), []);
   useEffect(
     () => () => {
       sphereGeo.dispose();
+      horizonGeo.dispose();
       reticleGeo.dispose();
       glowTex.dispose();
       rimTex.dispose();
       streakTex.dispose();
+      lensTex.dispose();
+      jetTex.dispose();
+      nebulaTex.forEach((t) => t.dispose());
     },
-    [sphereGeo, reticleGeo, glowTex, rimTex, streakTex],
+    [sphereGeo, horizonGeo, reticleGeo, glowTex, rimTex, streakTex, lensTex, jetTex, nebulaTex],
   );
 
   /* ---------------- evidence field ---------------- */
@@ -670,138 +1205,208 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
   /* ---------------- reactive severity ---------------- */
 
   const severity = useMemo(() => severityOf(results), [results]);
-  const meanRisk = useMemo(() => {
-    if (results.length === 0) return 0;
-    return (
-      results.reduce((n, r) => n + clamp(r.risk_score, 0, 100), 0) / results.length / 100
-    );
-  }, [results]);
-
+  const share = useMemo(() => verdictShares(results), [results]);
   /**
-   * The real verdict mix, as three shares of the scan. These are the exact
-   * numbers the hero's proportion bar and the stat tiles render — here they
-   * are spent as light instead of as type: the artifact is lit by the
-   * account's own findings, and a verdict with no resources in it contributes
-   * no light at all, so the lighting can never imply a finding that isn't there.
+   * Everything Mirror did NOT wave through — a hard refusal and a hold-for-a-
+   * human are different verdicts but the same outcome. This is the same figure
+   * the hero prints as "% withheld", spent here as the jets' reach.
    */
-  const verdictShare = useMemo(() => {
-    const n = results.length;
-    const of = (v: Verdict) =>
-      n === 0 ? 0 : results.filter((r) => r.verdict === v).length / n;
-    return {
-      BLOCKED: of("BLOCKED"),
-      NEEDS_REVIEW: of("NEEDS_REVIEW"),
-      SAFE: of("SAFE"),
-    };
-  }, [results]);
+  const withheld = share.BLOCKED + share.NEEDS_REVIEW;
 
-  /**
-   * The core's displacement amplitude. A calm account barely ripples; an
-   * account where Cedar refused most of what it was asked about boils. Both
-   * terms are real aggregates, so this is a readout with a skin on it.
-   */
-  const distortAmp = 0.05 + severity * 0.17 + meanRisk * 0.05;
+  /* ---------------- the quasar ---------------- */
 
-  /**
-   * A dense icosphere whose vertices are displaced on the CPU every frame.
-   *
-   * The core is a LIT surface now, so vertex density buys two things rather
-   * than one: the silhouette carries the distortion, and — because the normals
-   * are recomputed alongside the positions — so does the shading. Detail 12 is
-   * 3380 faces over 1692 welded vertices, which is what makes the travelling
-   * specular highlights break over the ripples instead of stepping across
-   * visible facets.
-   *
-   * The weld is mandatory, not tidiness — see weldByPosition.
-   */
-  const coreGeo = useMemo(() => {
-    const raw = new THREE.IcosahedronGeometry(1, 12);
-    const welded = weldByPosition(raw);
-    raw.dispose();
-    return welded;
-  }, []);
-  const coreBase = useMemo(
-    () => Float32Array.from(coreGeo.attributes.position.array as ArrayLike<number>),
-    [coreGeo],
-  );
-  useEffect(() => () => coreGeo.dispose(), [coreGeo]);
-  const coreMeshRef = useRef<THREE.Mesh>(null);
-  const coreShellRef = useRef<THREE.Mesh>(null);
+  const quasarRef = useRef<THREE.Group>(null);
+  const diskRef = useRef<THREE.Mesh>(null);
+  const glyphMeshRef = useRef<THREE.Mesh>(null);
+  const jetRef = useRef<THREE.Mesh>(null);
+  const nebulaRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const coreGlowRef = useRef<THREE.Sprite>(null);
+  const photonRef = useRef<THREE.Sprite>(null);
+  const lensRef = useRef<THREE.Sprite>(null);
 
-  const pulseCount = Math.min(layout.edges.length, MAX_PULSES);
-  /** Damage propagates faster the more of the account is actually blocked. */
-  const pulseRate = PULSE_RATE * (1 + severity * 0.8);
-
-  // The risk core: the page's hero object, at the real center of the graph and
-  // colored by the account's real aggregate state — not decoration, the same
-  // three-state signal the kill-switch banner and stat tiles show, given the
-  // scale it deserves. Its radius comes from `place` so the artifact is sized
-  // against the viewport rather than against the node count: a scan of eight
-  // resources still gets a centrepiece.
+  // The account's dominant verdict, worst-first. Same precedence the
+  // kill-switch banner and the stat tiles use.
   const coreColor = useMemo(() => {
     if (layout.nodes.some((n) => n.verdict === "BLOCKED")) return VERDICT_COLOR.BLOCKED;
     if (layout.nodes.some((n) => n.verdict === "NEEDS_REVIEW")) return VERDICT_COLOR.NEEDS_REVIEW;
     return VERDICT_COLOR.SAFE;
   }, [layout.nodes]);
-  const coreRadius = place.coreRadius;
-  const coreRingRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const coreGlowRef = useRef<THREE.Sprite>(null);
-  const coreRimRef = useRef<THREE.Sprite>(null);
 
-  /* ---------------- the lighting rig ---------------- */
-
-  const gl = useThree((s) => s.gl);
-
-  /**
-   * The studio, prefiltered into a real IBL. PMREM is the only env-map format
-   * three's physical materials accept, and it is what lets `roughness`
-   * actually blur the reflection instead of mirroring a gradient.
-   *
-   * Wrapped, because this is the one line in the component that touches the
-   * renderer directly: a driver that refuses the float render target must cost
-   * the page a duller orb, never a blank background. (CanvasBoundary would
-   * catch a throw, but it would take the whole scene with it.)
-   */
-  const env = useMemo(() => {
-    try {
-      const src = makeStudioEnvTexture(verdictShare);
-      const pmrem = new THREE.PMREMGenerator(gl);
-      const target = pmrem.fromEquirectangular(src);
-      pmrem.dispose();
-      src.dispose();
-      return target;
-    } catch {
-      return null;
-    }
-  }, [gl, verdictShare]);
-  useEffect(() => () => env?.dispose(), [env]);
-
-  /**
-   * Four punctual lights around the artifact.
-   *
-   * One is a fixed cool key — the studio lamp, constant regardless of what the
-   * scan found. The other three ARE the scan: one per verdict, in that
-   * verdict's locked status colour, with a brightness equal to that verdict's
-   * real share of the account. A clean account is lit green; an account Cedar
-   * mostly refused is lit red from below. Nothing is floored, so a verdict
-   * with zero resources is genuinely dark.
-   *
-   * `irr` is irradiance at the core's surface, not raw intensity: three's
-   * lighting is physical (1/r² falloff), so the intensity a light needs
-   * depends on how far out it orbits, and that distance scales with the
-   * viewport. Expressing the rig in irradiance keeps it looking identical at
-   * every breakpoint.
-   */
-  const lightRig = useMemo(
-    () => [
-      { color: "#eaf2ff", irr: 2.3, radius: 2.5, y: 1.5, phase: 0.85, speed: 0.043 },
-      { color: VERDICT_COLOR.BLOCKED, irr: verdictShare.BLOCKED * 4.4, radius: 2.15, y: -0.95, phase: 3.6, speed: 0.031 },
-      { color: VERDICT_COLOR.NEEDS_REVIEW, irr: verdictShare.NEEDS_REVIEW * 4.4, radius: 2.6, y: 0.45, phase: 5.35, speed: -0.024 },
-      { color: VERDICT_COLOR.SAFE, irr: verdictShare.SAFE * 4.4, radius: 2.3, y: -1.65, phase: 1.9, speed: 0.037 },
-    ],
-    [verdictShare],
+  const diskGeo = useMemo(
+    () => new THREE.RingGeometry(place.diskIn, place.diskOut, 168, 26),
+    [place.diskIn, place.diskOut],
   );
-  const lightRefs = useRef<(THREE.PointLight | null)[]>([]);
+  useEffect(() => () => diskGeo.dispose(), [diskGeo]);
+
+  const diskMat = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: DISK_VERT,
+        fragmentShader: DISK_FRAG,
+        uniforms: {
+          uTime: { value: 0 },
+          uRIn: { value: 1 },
+          uROut: { value: 2 },
+          uWarp: { value: 0.07 },
+          uShear: { value: 0.55 },
+          uBeam: { value: 0.3 },
+          uOpacity: { value: 1 },
+          uPointer: { value: new THREE.Vector2(1e4, 1e4) },
+          uPointerBoost: { value: 0 },
+          uBandC: {
+            value: [
+              new THREE.Color(VERDICT_COLOR.BLOCKED),
+              new THREE.Color(VERDICT_COLOR.NEEDS_REVIEW),
+              new THREE.Color(VERDICT_COLOR.SAFE),
+            ],
+          },
+          uBandW: { value: [0, 0, 0] },
+        },
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+  useEffect(() => () => diskMat.dispose(), [diskMat]);
+
+  // Disk geometry is rebuilt per viewport, so the shader's radii and the real
+  // verdict mix are pushed in rather than baked into the material's defaults.
+  useEffect(() => {
+    diskMat.uniforms.uRIn.value = place.diskIn;
+    diskMat.uniforms.uROut.value = place.diskOut;
+    // Severity is the one thing that makes the flow violent: more refusals,
+    // more relativistic beaming across the approaching limb.
+    diskMat.uniforms.uBeam.value = 0.16 + severity * 0.2;
+    diskMat.uniforms.uBandW.value = [share.BLOCKED, share.NEEDS_REVIEW, share.SAFE];
+  }, [diskMat, place.diskIn, place.diskOut, severity, share]);
+
+  /* ---------------- the glyph stream ---------------- */
+
+  const glyphs = useMemo(() => buildGlyphStream(results), [results]);
+
+  const atlas = useMemo(
+    () => (glyphs.length > 0 ? buildGlyphAtlas(glyphs.map((g) => g.text)) : null),
+    [glyphs],
+  );
+  useEffect(() => () => atlas?.texture.dispose(), [atlas]);
+
+  /**
+   * One InstancedBufferGeometry for the whole stream: a unit quad plus five
+   * per-glyph attributes, drawn in a single instanced call. A glyph whose
+   * string did not fit the atlas is dropped here rather than pointed at
+   * somebody else's tile.
+   */
+  const glyphGeo = useMemo(() => {
+    if (!atlas || glyphs.length === 0) return null;
+    const drawn = glyphs.filter((g) => atlas.tiles.has(g.text));
+    if (drawn.length === 0) return null;
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    // Cloned, not shared: disposing the template must not reach into the
+    // renderer's buffer cache for attributes this geometry still owns.
+    geo.index = quad.index!.clone();
+    geo.setAttribute("position", quad.attributes.position.clone());
+    geo.setAttribute("uv", quad.attributes.uv.clone());
+    geo.instanceCount = drawn.length;
+
+    const tile = new Float32Array(drawn.length * 4);
+    const orbit = new Float32Array(drawn.length * 4);
+    const shape = new Float32Array(drawn.length * 2);
+    const color = new Float32Array(drawn.length * 3);
+    const c = new THREE.Color();
+    const white = new THREE.Color("#ffffff");
+
+    drawn.forEach((g, i) => {
+      const t = atlas.tiles.get(g.text)!;
+      tile.set([t.x, t.y, t.z, t.w], i * 4);
+
+      // Launch angle, lifetime, phase, and the drift off the midplane. Every
+      // term is a deterministic hash of the owning resource + the record's
+      // index within it, so the same scan streams the same way every reload.
+      const speed = 0.045 + g.seedA * 0.085 + g.heat * 0.05;
+      // Tight against the midplane. Wider than this and the stream stops
+      // reading as material leaving a disk and becomes a word cloud.
+      const rise = (g.seedB - 0.5) * 0.24;
+      orbit.set([g.seedA * Math.PI * 2, speed, g.seedB, rise], i * 4);
+
+      shape.set([atlas.aspect.get(g.text) ?? 4, g.jet ? 1 : 0], i * 2);
+
+      // Verdict hue, lifted toward white so 13px of mono still reads as text,
+      // and brightened by the owner's real risk_score.
+      c.set(VERDICT_COLOR[g.verdict]).lerp(white, 0.34).multiplyScalar(0.62 + g.heat * 0.5);
+      color.set([c.r, c.g, c.b], i * 3);
+    });
+
+    geo.setAttribute("aTile", new THREE.InstancedBufferAttribute(tile, 4));
+    geo.setAttribute("aOrbit", new THREE.InstancedBufferAttribute(orbit, 4));
+    geo.setAttribute("aShape", new THREE.InstancedBufferAttribute(shape, 2));
+    geo.setAttribute("aColor", new THREE.InstancedBufferAttribute(color, 3));
+    // The quad is assembled in view space, so the geometry's own bounds are
+    // meaningless to the culler.
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    quad.dispose();
+    return geo;
+  }, [atlas, glyphs]);
+  useEffect(() => () => glyphGeo?.dispose(), [glyphGeo]);
+
+  const glyphMat = useMemo(() => {
+    if (!atlas) return null;
+    return new THREE.ShaderMaterial({
+      vertexShader: GLYPH_VERT,
+      fragmentShader: GLYPH_FRAG,
+      uniforms: {
+        uTime: { value: 0 },
+        uRIn: { value: 1 },
+        uROut: { value: 3 },
+        uShear: { value: 0.55 },
+        uJet: { value: 1 },
+        uHeight: { value: 0.2 },
+        uOpacity: { value: 0.8 },
+        uPointer: { value: new THREE.Vector3(1e4, 1e4, 1e4) },
+        uPointerBoost: { value: 0 },
+        uAtlas: { value: atlas.texture },
+      },
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+  }, [atlas]);
+  useEffect(() => () => glyphMat?.dispose(), [glyphMat]);
+
+  useEffect(() => {
+    if (!glyphMat) return;
+    glyphMat.uniforms.uRIn.value = place.diskIn * 0.86;
+    glyphMat.uniforms.uROut.value = place.glyphOut;
+    // ~13px of cap height at 1440 — small enough to read as a terminal feed,
+    // large enough that it is unmistakably text rather than dashes.
+    glyphMat.uniforms.uHeight.value = place.horizon * 0.15;
+    // The jets reach as far as the account withheld. A scan Mirror waved
+    // through entirely throws nothing.
+    glyphMat.uniforms.uJet.value = place.horizon * (1.4 + withheld * 2.4);
+  }, [glyphMat, place.diskIn, place.glyphOut, place.horizon, withheld]);
+
+  /* ---------------- nebula ---------------- */
+
+  const clouds = useMemo(() => buildNebula(results), [results]);
+  /**
+   * Verdict-tinted, but pulled most of the way to a deep indigo. The status
+   * hues mean "this resource's verdict" and a wall of saturated red gas behind
+   * the hero would read as page chrome shouting — which the brief explicitly
+   * forbids. 38% of the hue is enough for a blocked-heavy account to sit in
+   * warmer gas without the nebula ever being mistaken for a finding.
+   */
+  const cloudColors = useMemo(() => {
+    const base = new THREE.Color("#2b3a6b");
+    return clouds.map((c) => new THREE.Color(VERDICT_COLOR[c.verdict]).lerp(base, 0.62));
+  }, [clouds]);
+
+  const pulseCount = Math.min(layout.edges.length, MAX_PULSES);
+  /** Damage propagates faster the more of the account is actually blocked. */
+  const pulseRate = PULSE_RATE * (1 + severity * 0.8);
 
   // Under reduced motion the Canvas runs on demand rather than every frame
   // (see frameloop below), so nothing is repainted unless something actually
@@ -813,6 +1418,11 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, [reduced, invalidate]);
+
+  /** Scratch vectors for the per-frame pointer projection. Allocated once. */
+  const pointerWorld = useMemo(() => new THREE.Vector3(), []);
+  const pointerLocal = useMemo(() => new THREE.Vector3(), []);
+  const camLocal = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((state, dt) => {
     const t = state.clock.elapsedTime;
@@ -851,6 +1461,94 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     if (reduced) state.camera.position.copy(camTarget);
     else state.camera.position.lerp(camTarget, 1 - Math.pow(0.0015, dt));
 
+    /* ---- the quasar ---- */
+
+    const quasar = quasarRef.current;
+    if (quasar) {
+      // The cursor tips the disk. Small amplitude, eased, and disabled under
+      // reduced motion — but it is the thing that makes the object feel held
+      // rather than played back.
+      const targetTilt = DISK_TILT + (reduced ? 0 : p.y * DISK_TILT_POINTER);
+      const targetYaw = reduced ? 0 : p.x * DISK_TILT_POINTER * 0.7;
+      const k = reduced ? 1 : 1 - Math.pow(0.02, dt);
+      quasar.rotation.x = lerp(quasar.rotation.x, targetTilt, k);
+      quasar.rotation.z = lerp(quasar.rotation.z, targetYaw, k);
+    }
+
+    /*
+      The cursor, projected onto the scene's own plane and then pushed through
+      each object's inverse world matrix. Doing it per-object rather than once
+      is what keeps "near the cursor" meaning the same thing in the disk's
+      frame (flat, XY) and the stream's (upright, XYZ) while the tilt above is
+      still easing — a single shared local point would lag one of them.
+    */
+    pointerWorld.set(p.x * (viewport.width / 2), -p.y * (viewport.height / 2), 0);
+    const boost = reduced ? 0 : 0.9;
+
+    if (diskRef.current) {
+      pointerLocal.copy(pointerWorld);
+      diskRef.current.worldToLocal(pointerLocal);
+      (diskMat.uniforms.uPointer.value as THREE.Vector2).set(pointerLocal.x, pointerLocal.y);
+    }
+    diskMat.uniforms.uPointerBoost.value = boost;
+    diskMat.uniforms.uTime.value = reduced ? 0 : t;
+    // The disk is the brightest thing on the page; it has to get out of the
+    // way of the sections below exactly as fast as everything else does.
+    diskMat.uniforms.uOpacity.value = 1 - scrolled * 0.35;
+
+    if (glyphMat) {
+      if (glyphMeshRef.current) {
+        pointerLocal.copy(pointerWorld);
+        glyphMeshRef.current.worldToLocal(pointerLocal);
+        (glyphMat.uniforms.uPointer.value as THREE.Vector3).copy(pointerLocal);
+      }
+      glyphMat.uniforms.uPointerBoost.value = boost;
+      glyphMat.uniforms.uTime.value = reduced ? 0 : t;
+      glyphMat.uniforms.uOpacity.value = 0.86 - scrolled * 0.5;
+    }
+
+    // The jet is a flat plume, so it has to be turned about its own axis to
+    // keep its face to the camera — a sprite would keep the plume vertical on
+    // screen and break the moment the disk tilts.
+    const jet = jetRef.current;
+    if (jet) {
+      camLocal.copy(state.camera.position);
+      jet.parent?.worldToLocal(camLocal);
+      jet.rotation.y = Math.atan2(camLocal.x, camLocal.z);
+    }
+
+    // Slow ambient pulse on the halo — the same 8-14s cinematic band as every
+    // other glow on the page, never a fast blink. A blocked-heavy account
+    // burns brighter at the same cadence.
+    if (coreGlowRef.current) {
+      const pulse = reduced ? 1 : 0.85 + Math.sin((t * (Math.PI * 2)) / 10) * 0.15;
+      coreGlowRef.current.material.opacity = (0.26 + severity * 0.22) * pulse;
+    }
+    // The photon ring and the lensed limb breathe on their own, slower and
+    // offset, so the silhouette never settles into one fixed shape.
+    if (photonRef.current) {
+      const pulse = reduced ? 1 : 0.86 + Math.sin((t * (Math.PI * 2)) / 13 + 1.1) * 0.14;
+      photonRef.current.material.opacity = 0.72 * pulse;
+    }
+    if (lensRef.current) {
+      const pulse = reduced ? 1 : 0.88 + Math.sin((t * (Math.PI * 2)) / 17 + 2.4) * 0.12;
+      lensRef.current.material.opacity = (0.4 + severity * 0.2) * pulse;
+    }
+
+    // The nebula drifts against itself — each cloud on its own slow period, so
+    // the gas keeps reorganising and never reads as a painted backdrop.
+    if (!reduced) {
+      for (let i = 0; i < clouds.length; i++) {
+        const sprite = nebulaRefs.current[i];
+        if (!sprite) continue;
+        const c = clouds[i];
+        sprite.position.x = c.x * place.shell + Math.sin(t * c.drift + c.z) * place.horizon * 0.3;
+        sprite.position.y = c.y * place.shell + Math.cos(t * c.drift * 0.8 + c.x) * place.horizon * 0.22;
+      }
+    }
+
+    /* ---- the evidence ---- */
+
     // Pulses travel resource -> dependent: the direction the damage would
     // actually propagate if you deleted the resource. That's Mirror's thesis,
     // animated on the real edges rather than narrated.
@@ -871,105 +1569,6 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
       // slow rotateZ below is an absolute offset, not an accumulating one.
       ring.lookAt(state.camera.position);
       if (!reduced) ring.rotateZ(t * 0.25);
-    }
-
-    // Each concentric ring turns at its own rate on its own axis, so the core
-    // reads as a real nested-shell object rather than one flat spinning disc —
-    // the same "glossy concentric orb" shape the reference direction uses.
-    coreRingRefs.current.forEach((ring, i) => {
-      if (!ring) return;
-      if (reduced) return;
-      const speed = 0.12 + i * 0.05;
-      ring.rotation.x = t * speed * (i % 2 === 0 ? 1 : -1);
-      ring.rotation.y = t * speed * 0.7;
-    });
-
-    /*
-      The lights orbit. This is the single most important motion in the scene
-      now: the artifact itself barely turns, so what moves across its surface
-      is the LIGHT — a hard cool key sweeping one way, the verdict lamps
-      crossing the other, specular highlights breaking over the ripples.
-      Three different periods, none a multiple of another, so the rig never
-      returns to the same pose.
-    */
-    for (let i = 0; i < lightRig.length; i++) {
-      const light = lightRefs.current[i];
-      if (!light) continue;
-      const rig = lightRig[i];
-      const a = rig.phase + (reduced ? 0 : t * rig.speed);
-      light.position.set(
-        Math.cos(a) * rig.radius * coreRadius,
-        rig.y * coreRadius,
-        Math.sin(a) * rig.radius * coreRadius,
-      );
-    }
-
-    // Slow ambient pulse on the core's glow — same 8-14s cinematic band as
-    // every other glow on the page, never a fast blink. A blocked-heavy
-    // account burns brighter at the same cadence.
-    if (coreGlowRef.current) {
-      const pulse = reduced ? 1 : 0.85 + Math.sin(t * (Math.PI * 2) / 10) * 0.15;
-      coreGlowRef.current.material.opacity = (0.33 + severity * 0.24) * pulse;
-    }
-    // The refractive lip breathes on its own, slower period — so the rim and
-    // the bloom are never at peak together and the object keeps shifting.
-    if (coreRimRef.current) {
-      const pulse = reduced ? 1 : 0.8 + Math.sin(t * (Math.PI * 2) / 13 + 1.1) * 0.2;
-      coreRimRef.current.material.opacity = 0.78 * pulse;
-    }
-
-    /*
-      The core's surface. Three orthogonal sine waves multiplied together give
-      a cheap, seamless, seed-free 3D field — the displacement equivalent of
-      the distort material, without pulling a shader library in. Vertices are
-      pushed along their own radius from the pristine copy in `coreBase`, so
-      the deformation never accumulates or drifts off the unit sphere.
-
-      Two octaves, not one. At the frequencies this started with (~2.1 on a
-      unit sphere) a single wave is a third of a cycle across the whole
-      object — readable as a wobble on a 60px blob, invisible on a 530px one.
-      The first octave is the slow heave that still shapes the silhouette; the
-      second, roughly twice the frequency at a tenth the amplitude, is the fine
-      boil that gives the highlights something to break over. Both numbers are
-      ceilings found by looking: push the second octave much past this and the
-      key light's specular shatters into speckle instead of travelling.
-    */
-    const corePos = coreGeo.attributes.position;
-    const arr = corePos.array as Float32Array;
-    const tt = reduced ? 0 : t * 0.55;
-    for (let i = 0; i < arr.length; i += 3) {
-      const x = coreBase[i];
-      const y = coreBase[i + 1];
-      const z = coreBase[i + 2];
-      const n =
-        Math.sin(x * 3.1 + tt) *
-          Math.sin(y * 3.7 - tt * 0.83) *
-          Math.sin(z * 3.3 + tt * 0.61) +
-        0.1 *
-          Math.sin(x * 7.3 - tt * 1.4) *
-          Math.sin(y * 7.9 + tt * 1.1) *
-          Math.sin(z * 7.6 - tt * 1.7);
-      const d = 1 + distortAmp * n;
-      arr[i] = x * d;
-      arr[i + 1] = y * d;
-      arr[i + 2] = z * d;
-    }
-    corePos.needsUpdate = true;
-    // The surface is lit now, so displacing it without recomputing normals
-    // would leave the shading perfectly smooth over a rippling silhouette —
-    // the single tell that separates a real displaced surface from a sphere
-    // with a bumpy outline. 3380 welded faces is a sub-millisecond cost.
-    coreGeo.computeVertexNormals();
-
-    // A breath on the whole core, and a wireframe shell turning against it so
-    // the object reads as a containment field around something unstable
-    // rather than as one spinning ball.
-    if (coreMeshRef.current && !reduced) {
-      coreMeshRef.current.scale.setScalar(coreRadius * (1 + Math.sin(t * 0.45) * 0.035));
-    }
-    if (coreShellRef.current && !reduced) {
-      coreShellRef.current.rotation.y = -t * 0.11;
-      coreShellRef.current.rotation.x = Math.sin(t * 0.07) * 0.5;
     }
 
     /*
@@ -1008,355 +1607,31 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
     }
   });
 
+  const horizon = place.horizon;
+
   return (
     <group position={[place.centerX, place.centerY, 0]}>
       {/*
-        The risk core — real aggregate state, given real visual weight.
-
-        It sits OUTSIDE the spinning group on purpose. The evidence structure
-        orbits; the artifact is held still and dead-on, and what moves across
-        it is the light. That is the whole difference between a spinning ball
-        and a lit object.
+        The nebula. One soft cloud per scanned resource, far behind everything
+        and exempt from the fog (at this depth the fog would simply delete it).
+        Additive at a few percent each: it paints colour onto the void without
+        ever raising the floor under the hero's type, and the horizon in front
+        of it punches a hard black hole straight through the gas.
       */}
-      <group>
-        {/*
-          The rig. One fixed cool key plus one lamp per verdict, each burning
-          at that verdict's real share of the scan (see `lightRig`). Nothing
-          else in this scene is lit — every node, edge, mote and ring is an
-          unlit readout — so these four lights touch exactly one object: the
-          core. Adding them cannot change what any data-bearing colour means.
-        */}
-        <ambientLight intensity={0.16} color="#6f83ad" />
-        {lightRig.map((rig, i) => (
-          <pointLight
-            key={i}
-            ref={(l) => {
-              lightRefs.current[i] = l;
-            }}
-            color={rig.color}
-            // Physical falloff: intensity is irradiance x distance². See lightRig.
-            intensity={rig.irr * Math.pow(rig.radius * coreRadius, 2)}
-            decay={2}
-          />
-        ))}
-
-        {/*
-          Two anamorphic streaks through the artifact's waist — the lens flare
-          the reference direction leans on. The wide one carries the account's
-          real dominant verdict colour; the short one is the cool key's own
-          flare, which is what sells the two as the same optical event.
-        */}
+      {clouds.map((c, i) => (
         <sprite
-          scale={[coreRadius * 11, coreRadius * 0.8, 1]}
-          position={[0, coreRadius * 0.12, -coreRadius * 0.4]}
-        >
-          <spriteMaterial
-            map={streakTex}
-            color={coreColor}
-            transparent
-            opacity={0.2 + severity * 0.14}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-        <sprite
-          scale={[coreRadius * 6, coreRadius * 0.34, 1]}
-          position={[coreRadius * 0.25, coreRadius * 0.52, -coreRadius * 0.3]}
-        >
-          <spriteMaterial
-            map={streakTex}
-            color="#9fc4ff"
-            transparent
-            opacity={0.22}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-
-        {/* A fixed cool-blue ambient undertone, offset behind the real-state
-            glow — the same identity color as the hero's own glow, so the
-            core reads as a two-tone plasma object rather than a flat
-            single-hue ball, without diluting what the dominant color means. */}
-        <sprite
-          scale={[coreRadius * 8, coreRadius * 8, 1]}
-          position={[coreRadius * 0.3, -coreRadius * 0.2, -coreRadius * 0.5]}
-        >
-          <spriteMaterial
-            map={glowTex}
-            color="#3B82F6"
-            transparent
-            opacity={0.2}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-
-        {/*
-          The artifact itself: a clearcoated gunmetal, not an emissive blob.
-
-          That choice does two jobs at once. It is what makes the object read
-          as a dramatically lit THING — most of its surface falls away into
-          shadow, and the light that lands on it is the account's own verdict
-          mix — and it is what keeps 140px of white display type legible where
-          the headline crosses it, because an unlit emissive fill at this
-          scale would be a floodlight behind the type.
-
-          The base colour is deliberately neutral. On a metal, `color` tints
-          the reflection, so a coloured body would put the verdict hue
-          everywhere and make it mean nothing; keeping the metal grey means
-          every scrap of colour on this object arrives as LIGHT — the verdict
-          lamps, the studio blob in the env map, the sheen — which is the only
-          honest way to render a readout as a surface. Iridescence gives the
-          prismatic shift at the terminator, clearcoat gives the hard white
-          specular the lamps rake across, and the emissive floor means the
-          dominant verdict is present even where nothing is lighting it.
-        */}
-        <mesh ref={coreMeshRef} geometry={coreGeo} scale={coreRadius}>
-          <meshPhysicalMaterial
-            color="#545a6c"
-            metalness={0.84}
-            roughness={0.29}
-            clearcoat={1}
-            clearcoatRoughness={0.12}
-            iridescence={0.85}
-            iridescenceIOR={1.5}
-            iridescenceThicknessRange={[120, 520]}
-            sheen={0.35}
-            sheenColor={coreColor}
-            sheenRoughness={0.5}
-            emissive={coreColor}
-            emissiveIntensity={0.05 + severity * 0.09}
-            envMap={env?.texture ?? null}
-            envMapIntensity={1.4}
-            fog={false}
-          />
-        </mesh>
-
-        {/*
-          The refractive lip. A billboarded annulus just outside the
-          silhouette, which is where a polished object throws its brightest
-          chromatic edge. Drawn rather than shaded — see makeRimTexture.
-
-          The 2.6 is load-bearing: the texture's bright ring sits at 93% of the
-          sprite's half-size, i.e. 1.21 core radii, while the displaced surface
-          only ever reaches 1 + distortAmp (0.27 at the theoretical worst, ~0.14
-          on a real payload). So the lip always clears the silhouette and is
-          never swallowed by the depth test, while its inner feather still
-          overlaps the edge it is supposed to be hugging.
-        */}
-        <sprite ref={coreRimRef} scale={[coreRadius * 2.6, coreRadius * 2.6, 1]}>
-          <spriteMaterial
-            map={rimTex}
-            color="#d8e6ff"
-            transparent
-            opacity={0.78}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-
-        {/* Containment shell: a coarse wireframe cage turning against the
-            core's own spin. It brightens with the real blocked share, so the
-            cage looks like it is straining on a bad account. */}
-        <mesh ref={coreShellRef} scale={coreRadius * 1.5}>
-          <icosahedronGeometry args={[1, 1]} />
-          <meshBasicMaterial
-            color={coreColor}
-            wireframe
-            transparent
-            opacity={0.13 + severity * 0.24}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-
-        {/*
-          The armature. Three gyroscope hoops on independent axes.
-
-          Radius and tube are both deliberately small. A hoop at 2.4 core radii
-          is a 600px arc at 1440, and a 600px arc with any visible thickness
-          stops being an armature and becomes a grey band sweeping through the
-          headline — which is precisely what it did on the first pass. Held at
-          1.9 radii and a 0.009 tube they stay inside the artifact's own
-          footprint and read as structure, not as smears. The middle hoop is
-          cool white — the key light's own colour — so the set does not read as
-          three copies of one ring.
-        */}
-        {[1.28, 1.48, 1.72].map((mult, i) => (
-          <mesh
-            key={i}
-            ref={(m) => {
-              coreRingRefs.current[i] = m;
-            }}
-            scale={coreRadius * mult}
-          >
-            <torusGeometry args={[1, 0.006, 8, 128]} />
-            <meshBasicMaterial
-              color={i === 1 ? "#cfe0ff" : coreColor}
-              transparent
-              opacity={0.26 + severity * 0.16 - i * 0.06}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </mesh>
-        ))}
-
-        {/*
-          Layered bloom. Three additive falloffs at different radii rather than
-          one: a tight hot centre, the mid halo that carries the account's real
-          state, and a wide atmospheric wash that puts light on the void itself.
-          Stacking them is what gives the glow a real curve instead of the flat
-          disc a single sprite always reads as.
-        */}
-        <sprite scale={[coreRadius * 2.9, coreRadius * 2.9, 1]}>
-          <spriteMaterial
-            map={glowTex}
-            color="#ffffff"
-            transparent
-            opacity={0.13 + severity * 0.1}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-        <sprite ref={coreGlowRef} scale={[coreRadius * 6, coreRadius * 6, 1]}>
-          <spriteMaterial
-            map={glowTex}
-            color={coreColor}
-            transparent
-            opacity={0.34}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-        <sprite scale={[coreRadius * 11, coreRadius * 11, 1]} position={[0, 0, -coreRadius]}>
-          <spriteMaterial
-            map={glowTex}
-            color={coreColor}
-            transparent
-            opacity={0.16}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            fog={false}
-            toneMapped={false}
-          />
-        </sprite>
-      </group>
-
-      {/* Everything below is the evidence, and the evidence is what orbits. */}
-      <group ref={groupRef}>
-      {layout.nodes.map((nd, i) => {
-        const color = VERDICT_COLOR[nd.verdict];
-        // Radius is the real dependent count. The resources that would break
-        // things are literally the biggest objects on screen.
-        const radius =
-          (0.098 + 0.05 * Math.min(nd.dependentCount, 5)) * place.nodeScale;
-        // risk_score is Mirror's "how live is this evidence" number; it drives
-        // how hot the node burns, so recently-touched resources glow harder.
-        const heat = 0.42 + (clamp(nd.risk, 0, 100) / 100) * 0.45;
-        const blocked = nd.verdict === "BLOCKED";
-
-        return (
-          <group key={`${nd.id}-${i}`} position={placed[i]}>
-            <mesh geometry={sphereGeo} scale={radius}>
-              <meshBasicMaterial color={color} toneMapped={false} />
-            </mesh>
-            {/* Additive halo — the bloom we can afford without a post stack. */}
-            <sprite scale={[radius * 13, radius * 13, 1]}>
-              <spriteMaterial
-                map={glowTex}
-                color={color}
-                transparent
-                opacity={heat}
-                blending={THREE.AdditiveBlending}
-                depthWrite={false}
-                fog={false}
-                toneMapped={false}
-              />
-            </sprite>
-            {blocked ? (
-              // Only the resources Cedar actually refused get a reticle. On the
-              // real sandbox payload that is three objects out of eight — the
-              // reticle is a finding, not an ornament.
-              <mesh
-                ref={(m) => {
-                  reticleRefs.current[i] = m;
-                }}
-                geometry={reticleGeo}
-                scale={radius * 3.1}
-              >
-                <meshBasicMaterial
-                  color={HAZARD}
-                  transparent
-                  opacity={0.45}
-                  side={THREE.DoubleSide}
-                  depthWrite={false}
-                  toneMapped={false}
-                />
-              </mesh>
-            ) : null}
-          </group>
-        );
-      })}
-
-      {/*
-        The evidence field — one point per real record in the payload, orbiting
-        the resource it was found on. This is where the scene gets its depth
-        and its ambient shimmer, and not one mote of it is padding.
-      */}
-      {motes.length > 0 ? (
-        <points geometry={moteGeo}>
-          <pointsMaterial
-            ref={moteMatRef}
-            map={glowTex}
-            size={0.15 * place.nodeScale}
-            sizeAttenuation
-            vertexColors
-            transparent
-            opacity={0.9}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </points>
-      ) : null}
-
-      {layout.edges.length > 0 ? (
-        <lineSegments geometry={edgeGeometry}>
-          <lineBasicMaterial
-            color={HAZARD}
-            transparent
-            opacity={0.55 + severity * 0.35}
-            toneMapped={false}
-          />
-        </lineSegments>
-      ) : null}
-
-      {Array.from({ length: pulseCount }, (_, i) => (
-        <sprite
-          key={`pulse-${i}`}
+          key={`cloud-${c.owner}-${i}`}
           ref={(s) => {
-            pulseRefs.current[i] = s;
+            nebulaRefs.current[i] = s;
           }}
-          scale={[0.62 * place.nodeScale, 0.62 * place.nodeScale, 1]}
+          position={[c.x * place.shell, c.y * place.shell, c.z * place.shell]}
+          scale={[c.scale * place.shell, c.scale * place.shell * 0.72, 1]}
         >
           <spriteMaterial
-            map={glowTex}
-            color={HAZARD}
+            map={nebulaTex[c.tile]}
+            color={cloudColors[i]}
             transparent
-            opacity={0}
+            opacity={c.alpha}
             blending={THREE.AdditiveBlending}
             depthWrite={false}
             fog={false}
@@ -1364,6 +1639,306 @@ function GraphScene({ results, reduced, pointerRef, scrollRef }: SceneProps) {
           />
         </sprite>
       ))}
+
+      {/*
+        Two anamorphic streaks through the quasar's waist, pushed BEHIND the
+        horizon so the sphere's depth buffer cuts their middle out — glare
+        escaping past an object that swallows it, rather than a flare pasted on
+        top. The wide one carries the account's real dominant verdict colour;
+        the short one is the inner disk's own blue-white.
+      */}
+      <sprite
+        scale={[horizon * 13, horizon * 0.72, 1]}
+        position={[0, horizon * 0.1, -horizon * 1.2]}
+      >
+        <spriteMaterial
+          map={streakTex}
+          color={coreColor}
+          transparent
+          opacity={0.18 + severity * 0.16}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+      <sprite
+        scale={[horizon * 7, horizon * 0.3, 1]}
+        position={[horizon * 0.2, horizon * 0.44, -horizon * 1.1]}
+      >
+        <spriteMaterial
+          map={streakTex}
+          color="#9fc4ff"
+          transparent
+          opacity={0.22}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+
+      {/*
+        Layered bloom, all of it centred BEHIND the horizon for the same reason
+        as the streaks: a halo is light that got past the hole, so its middle
+        has to be missing. Three additive falloffs at different radii — a tight
+        hot ring of escaping light, the mid halo that carries the account's real
+        state, and a wide atmospheric wash that puts colour on the void itself.
+      */}
+      <sprite scale={[horizon * 3.4, horizon * 3.4, 1]} position={[0, 0, -horizon * 1.05]}>
+        <spriteMaterial
+          map={glowTex}
+          color="#eaf3ff"
+          transparent
+          opacity={0.16 + severity * 0.1}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+      <sprite
+        ref={coreGlowRef}
+        scale={[horizon * 7.5, horizon * 7.5, 1]}
+        position={[0, 0, -horizon * 1.3]}
+      >
+        <spriteMaterial
+          map={glowTex}
+          color={coreColor}
+          transparent
+          opacity={0.3}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+      <sprite scale={[horizon * 14, horizon * 14, 1]} position={[0, 0, -horizon * 2.2]}>
+        <spriteMaterial
+          map={glowTex}
+          color={coreColor}
+          transparent
+          opacity={0.13}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+
+      {/*
+        The quasar proper: disk, jets and glyph stream all share one tilted
+        frame, so the stream rides the disk's plane and the jets stand on its
+        normal no matter how the cursor tips it.
+      */}
+      <group ref={quasarRef} rotation={[DISK_TILT, 0, 0]}>
+        {/*
+          The bipolar jet. Length is the real withheld share and brightness the
+          real blocked share, so an account Mirror waved through entirely
+          throws nothing at all — the jet is a finding, not an ornament.
+          Cylindrically billboarded per frame (see the frame loop).
+        */}
+        {withheld > 0 ? (
+          <mesh
+            ref={jetRef}
+            scale={[
+              horizon * (1.4 + withheld * 2.4) * 0.66,
+              horizon * (1.4 + withheld * 2.4) * 2,
+              1,
+            ]}
+          >
+            <planeGeometry args={[1, 1]} />
+            <meshBasicMaterial
+              map={jetTex}
+              color="#cfe2ff"
+              transparent
+              opacity={0.14 + severity * 0.55}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+              fog={false}
+              toneMapped={false}
+            />
+          </mesh>
+        ) : null}
+
+        {/*
+          The accretion disk — the hero's verdict spectrum bar, revolved. Laid
+          flat by this rotation; everything else about it is in DISK_FRAG.
+        */}
+        <mesh ref={diskRef} geometry={diskGeo} material={diskMat} rotation={[-Math.PI / 2, 0, 0]} />
+
+        {/*
+          The telemetry. One instanced billboard per real payload string,
+          launched from the disk's inner edge and sheared outward — or, for the
+          resources Cedar refused, ejected up the jet.
+        */}
+        {glyphGeo && glyphMat ? (
+          <mesh ref={glyphMeshRef} geometry={glyphGeo} material={glyphMat} frustumCulled={false} />
+        ) : null}
+      </group>
+
+      {/*
+        The event horizon.
+
+        Pure #000, unlit, fog-exempt, and the only object in this scene that
+        writes depth — which is the entire trick. Nothing is drawn ON it; every
+        glow, streak, halo, nebula cloud and far disk limb behind it is culled
+        by its silhouette, so what you are looking at is a hole in the light
+        rather than a black ball. It is also why 140px of white Unbounded can
+        cross the centre of the composition and stay perfectly legible.
+      */}
+      <mesh geometry={horizonGeo} scale={horizon}>
+        <meshBasicMaterial color="#000000" toneMapped={false} fog={false} />
+      </mesh>
+
+      {/*
+        The photon ring: the last orbit light can hold before it falls in, hard
+        against the silhouette. Scaled so the texture's bright annulus (at 93%
+        of the sprite's half-size) lands at 1.06 horizons — just clear of the
+        sphere, never swallowed by it.
+      */}
+      <sprite ref={photonRef} scale={[horizon * 2.28, horizon * 2.28, 1]}>
+        <spriteMaterial
+          map={rimTex}
+          color="#dcebff"
+          transparent
+          opacity={0.72}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+
+      {/*
+        The lensed limb — the disk material behind the hole, bent up over the
+        top and under the bottom. Drawn, not traced (see makeLensTexture), and
+        billboarded so it always stands vertically against the flat disk.
+        Tinted with the account's dominant verdict because that is the light it
+        is bending.
+      */}
+      <sprite ref={lensRef} scale={[horizon * 3.5, horizon * 3.5, 1]}>
+        <spriteMaterial
+          map={lensTex}
+          color={coreColor}
+          transparent
+          opacity={0.45}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          fog={false}
+          toneMapped={false}
+        />
+      </sprite>
+
+      {/* Everything below is the evidence, and the evidence is what orbits. */}
+      <group ref={groupRef}>
+        {layout.nodes.map((nd, i) => {
+          const color = VERDICT_COLOR[nd.verdict];
+          // Radius is the real dependent count. The resources that would break
+          // things are literally the biggest objects on screen.
+          const radius = (0.098 + 0.05 * Math.min(nd.dependentCount, 5)) * place.nodeScale;
+          // risk_score is Mirror's "how live is this evidence" number; it drives
+          // how hot the node burns, so recently-touched resources glow harder.
+          const heat = 0.42 + (clamp(nd.risk, 0, 100) / 100) * 0.45;
+          const blocked = nd.verdict === "BLOCKED";
+
+          return (
+            <group key={`${nd.id}-${i}`} position={placed[i]}>
+              <mesh geometry={sphereGeo} scale={radius}>
+                <meshBasicMaterial color={color} toneMapped={false} />
+              </mesh>
+              {/* Additive halo — the bloom we can afford without a post stack. */}
+              <sprite scale={[radius * 13, radius * 13, 1]}>
+                <spriteMaterial
+                  map={glowTex}
+                  color={color}
+                  transparent
+                  opacity={heat}
+                  blending={THREE.AdditiveBlending}
+                  depthWrite={false}
+                  fog={false}
+                  toneMapped={false}
+                />
+              </sprite>
+              {blocked ? (
+                // Only the resources Cedar actually refused get a reticle. On the
+                // real sandbox payload that is three objects out of nine — the
+                // reticle is a finding, not an ornament.
+                <mesh
+                  ref={(m) => {
+                    reticleRefs.current[i] = m;
+                  }}
+                  geometry={reticleGeo}
+                  scale={radius * 3.1}
+                >
+                  <meshBasicMaterial
+                    color={HAZARD}
+                    transparent
+                    opacity={0.45}
+                    side={THREE.DoubleSide}
+                    depthWrite={false}
+                    toneMapped={false}
+                  />
+                </mesh>
+              ) : null}
+            </group>
+          );
+        })}
+
+        {/*
+          The evidence field — one point per real record in the payload, orbiting
+          the resource it was found on. This is where the scene gets its depth
+          and its ambient shimmer, and not one mote of it is padding.
+        */}
+        {motes.length > 0 ? (
+          <points geometry={moteGeo}>
+            <pointsMaterial
+              ref={moteMatRef}
+              map={glowTex}
+              size={0.15 * place.nodeScale}
+              sizeAttenuation
+              vertexColors
+              transparent
+              opacity={0.9}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </points>
+        ) : null}
+
+        {layout.edges.length > 0 ? (
+          <lineSegments geometry={edgeGeometry}>
+            <lineBasicMaterial
+              color={HAZARD}
+              transparent
+              opacity={0.55 + severity * 0.35}
+              toneMapped={false}
+            />
+          </lineSegments>
+        ) : null}
+
+        {Array.from({ length: pulseCount }, (_, i) => (
+          <sprite
+            key={`pulse-${i}`}
+            ref={(s) => {
+              pulseRefs.current[i] = s;
+            }}
+            scale={[0.62 * place.nodeScale, 0.62 * place.nodeScale, 1]}
+          >
+            <spriteMaterial
+              map={glowTex}
+              color={HAZARD}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              fog={false}
+              toneMapped={false}
+            />
+          </sprite>
+        ))}
       </group>
     </group>
   );
@@ -1407,14 +1982,10 @@ const GRAPH_CSS = `
   position: absolute;
   inset: 0;
   /*
-    The veil is now a RAKING light, not a blanket. The previous ramp held
-    ~0.86 all the way out to the headline's right edge and only cleared 12vw
-    later, which on a 1440 screen meant the scene was only ever visible in the
-    right 6% of the frame — the single reason the artifact read as dim and
-    cornered. These stops are expressed as fractions of the same real type
-    metric, so the darkness still tracks the headline, but it is spent almost
-    entirely on the left column where the type actually lives and is gone by
-    the time it reaches the artifact.
+    The veil is a RAKING light, not a blanket. These stops are expressed as
+    fractions of the same real type metric, so the darkness tracks the
+    headline, but it is spent almost entirely on the left column where the type
+    actually lives and is gone by the time it reaches the quasar.
   */
   background: linear-gradient(
     to right,
@@ -1433,8 +2004,8 @@ const GRAPH_CSS = `
 
 /* Always on: keeps the graph from reading as wallpaper and holds the nav and
    the verdict table on solid ground at the top and bottom of the viewport.
-   The radial term is re-centred on the artifact (62% / 48%) and opened up, so
-   the vignette frames the core rather than cropping its glow. */
+   The radial term is centred on the quasar (62% / 48%) and opened up, so the
+   vignette frames the disk rather than cropping its glow. */
 .mirror-graph-vignette {
   position: absolute;
   inset: 0;
@@ -1445,15 +2016,16 @@ const GRAPH_CSS = `
 }
 
 /*
-  Caustics — the light the artifact throws back onto the void around it.
+  Caustics — the light the quasar throws back onto the void around it.
 
   Four soft elliptical fields on screen-blend, drifting against each other on a
   26s cycle that shares no factor with the 3D drift periods, so the pattern
-  never repeats.
+  never repeats. The palette is the disk's: hot blue-white through the middle,
+  the dominant verdict's warmth at the rim.
 
   Every stop here is an ellipse with a long fade. A conic gradient was the
   obvious way to get refracted spokes and it is the wrong tool: its stops are
-  hard angular edges, and over a lit sphere they render as opaque pie wedges
+  hard angular edges, and over a lit object they render as opaque pie wedges
   across the whole hero. Caustics are soft or they are nothing.
 */
 .mirror-graph-caustics {
@@ -1478,8 +2050,8 @@ const GRAPH_CSS = `
   Portrait: the headline runs the full width, so a left-weighted veil would
   simply black out the whole screen. The veil turns through ninety degrees
   with the graph — a horizontal band protecting the type, clearing for the
-  lower third the artifact has moved into. It never reaches zero on this axis,
-  because on a phone the readout rail sits directly over the core.
+  lower third the quasar has moved into. It never reaches zero on this axis,
+  because on a phone the readout rail sits directly over the disk.
 */
 @media (max-aspect-ratio: 1 / 1) {
   .mirror-graph-veil {
@@ -1586,7 +2158,7 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
       if (veilRef.current) veilRef.current.style.opacity = String(1 - p * 0.8);
       document.documentElement.style.setProperty("--mirror-scroll-y", y.toFixed(1));
 
-      /* The orb is now large enough to dominate the frame, which is exactly
+      /* The quasar is large enough to dominate the frame, which is exactly
          what the hero wants — but this canvas is `fixed`, so without this it
          stays that bright and that big behind every section all the way to
          the footer, fighting unbacked section text (the legend, the
@@ -1594,7 +2166,7 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
          anything but a faint ambient presence once you're two hero-heights
          past it, so the whole scene (canvas + caustics + vignette; the veil
          already fades on its own, faster, for the hero text itself) recedes
-         from full presence to a quiet 14% over that stretch and holds there
+         from full presence to a quiet 6% over that stretch and holds there
          — never fully gone, so the "living background" behind later panels
          survives, just no longer competing with anything printed on it. */
       const recede = clamp((y - vh * 0.55) / (vh * 0.75), 0, 1);
@@ -1647,12 +2219,11 @@ export function GraphBackground({ results }: GraphBackgroundProps) {
             gl={{ antialias: true, powerPreference: "high-performance" }}
           >
             {/* Fog carries depth for the EVIDENCE — nodes, edges, motes, pulses
-                are all still unlit readout points, and the void swallowing the
-                far side of the structure is what makes the shell read as a
-                volume. The core opts out (fog={false}); it is a lit object with
-                its own rig and it is meant to sit in front of all of this.
-                Pushed out from 10-22 to 11-26 because the structure is now
-                roughly twice as deep as it was. */}
+                are all unlit readout points, and the void swallowing the far
+                side of the structure is what makes the shell read as a volume.
+                The quasar and the nebula opt out (fog={false} / raw
+                ShaderMaterial): the horizon has to stay the darkest thing on
+                screen, and fogging it toward #0A0A0A would lift it off black. */}
             <fog attach="fog" args={[VOID, 11, 26]} />
             <GraphScene
               results={results}
